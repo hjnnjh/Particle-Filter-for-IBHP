@@ -129,7 +129,5 @@ dmypy.json
 .pyre/
 
 # custom
-__pycache__/
 dataset/
 img/
-.ipynb_checkpoints/
