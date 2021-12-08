@@ -10,7 +10,7 @@
 """
 from collections import Counter
 from functools import partial
-from multiprocessing import Pool, Manager
+from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -480,7 +480,6 @@ class Particle(IBHP):
         likelihood_text = 1
         for k, v in count_dict.items():
             likelihood_text = likelihood_text * (vn_avg[k] ** v)
-        print(f'[event {event_order}] old_particle_weight: {old_particle_weight}')
         # 计算更新后的粒子权重
         self.new_particle_weight = old_particle_weight * likelihood_timestamp * likelihood_text
 
@@ -491,14 +490,14 @@ class Particle_Filter:
     这个类控制所有粒子的权重更新、归一化，实现粒子的重采样（采用并行的方式）
     """
 
-    def __init__(self, t: np.ndarray, T: np.ndarray, n_particle: int, word_corpus: np.ndarray, L: int = 3):
+    def __init__(self, t: np.ndarray, T: np.ndarray, n_particle: int, word_dict: np.ndarray, L: int = 3):
         """
         生成粒子以及初始化粒子权重
 
         :param t: 时间戳向量
         :param T: 文本
         :param n_particle: 粒子个数
-        :param word_corpus: 词典
+        :param word_dict: 词典
         :param L: base kernel的个数
         """
         assert len(t) == T.shape[0]
@@ -506,16 +505,25 @@ class Particle_Filter:
         self.T = T
         self.n_sample = self.T.shape[0]
         self.n_particle = n_particle
-        self.word_corpus = word_corpus
-        self.particle_list = [Particle(word_corpus=word_corpus, L=L) for i in np.arange(self.n_particle)]
-        self.particle_weight_list = np.array([1 / self.n_particle] * self.n_particle)
+        self.word_corpus = word_dict
+        self.particle_list = [Particle(word_corpus=word_dict, L=L) for i in np.arange(self.n_particle)]
+        self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
+
+    def get_particle_list(self):
+        return self.particle_list
+
+    def get_particle_num(self):
+        return self.n_particle
+
+    def get_partcie_weight_arr(self):
+        return self.particle_weight_arr
 
     def normalize_particle_weight(self):
         """
         归一化粒子权重（将权重映射到0-1区间，并且和为1）
         :return:
         """
-        self.particle_weight_list = self.particle_weight_list / np.sum(self.particle_weight_list)
+        self.particle_weight_arr = self.particle_weight_arr / np.sum(self.particle_weight_arr)
 
     def resample_particles(self):
         """
@@ -523,8 +531,8 @@ class Particle_Filter:
         :return:
         """
         new_particle_list = []
-        sorted_particle_index = np.argsort(self.particle_weight_list)  # 得到的是粒子权重升序排列的索引
-        sorted_particle_weight = self.particle_weight_list[sorted_particle_index]  # 升序排列后的粒子权重
+        sorted_particle_index = np.argsort(self.particle_weight_arr)  # 得到的是粒子权重升序排列的索引
+        sorted_particle_weight = self.particle_weight_arr[sorted_particle_index]  # 升序排列后的粒子权重
         # 构造粒子对应的权重区间
         for i in np.arange(self.n_particle - 1, -1, -1):
             sorted_particle_weight[i] = np.sum(sorted_particle_weight[: i + 1])
@@ -539,9 +547,9 @@ class Particle_Filter:
             new_particle_list.append(new_particle)
         # 更新粒子列表，重新设置粒子权重
         self.particle_list = new_particle_list
-        self.particle_weight_list = np.array([1 / self.n_particle] * self.n_particle)
+        self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
 
-    def generate_first_event4paricle(self, particle_idx_pair: (int, Particle)):
+    def generate_first_event_status_for_each_paricle(self, particle_idx_pair: (int, Particle)):
         """
         给每个粒子生成第一个event对应的状态
         :param particle_idx_pair:
@@ -549,7 +557,7 @@ class Particle_Filter:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        print(f'[event 1, paricle {particle_idx + 1}] Begin to sample particle……')
+        print(f'[event 1, paricle {particle_idx + 1}] Sampling particle status……')
         particle.sample_first_event_particle(shape_lammbda0=2, scale_lambda0=2, shape_beta=2, scale_beta=2,
                                              shape_tau=2, scale_tau=2)
         lambda_0_candi_list, beta_candi_list, tau_candi_list = particle.sample_hyperparams(
@@ -567,22 +575,22 @@ class Particle_Filter:
             tau_prior_scale=2,
             t=self.t,
             event_order=1,
-            n_iter=1000,
-            burning=950,
+            n_iter=100000,
+            burning=95000,
             particle_idx=particle_idx)
         # Update the triggering kernels
-        print(f'[event 1, paricle {particle_idx + 1}]: Updating trigger kernel……')
+        print(f'[event 1, paricle {particle_idx + 1}] Updating trigger kernel……')
         particle.update_trigger_kernel(lambda_0_candi_list=lambda_0_candi_list,
                                        beta_candi_list=beta_candi_list,
                                        tau_candi_list=tau_candi_list)
 
         # Calculate and update the log particle weights
-        print(f'[event 1, paricle {particle_idx + 1}]: Updating particle weight……')
-        particle.update_paricle_weight(old_particle_weight=self.particle_weight_list[particle_idx], t=self.t, T=self.T,
+        print(f'[event 1, paricle {particle_idx + 1}] Updating particle weight……')
+        particle.update_paricle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
                                        event_order=1)
-        self.particle_weight_list[particle_idx] = particle.new_particle_weight
+        return particle_idx, particle
 
-    def generate_following_event4paritcle(self, particle_idx_pair: (int, Particle), n: int):
+    def generate_following_event_status_for_each_paritcle(self, particle_idx_pair: (int, Particle), n: int):
         """
 
         :param n:
@@ -591,7 +599,7 @@ class Particle_Filter:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        print(f'[event {n}, particle {particle_idx + 1}]: Sampling particle……')
+        print(f'[event {n}, particle {particle_idx + 1}] Sampling particle status……')
         particle.sample_following_event_particle(n)
         lambda_0_candi_list, beta_candi_list, tau_candi_list = particle.sample_hyperparams(
             lambda0_proposal_shape=3,
@@ -608,89 +616,100 @@ class Particle_Filter:
             tau_prior_scale=2,
             t=self.t,
             event_order=n,
-            n_iter=1000,
-            burning=950,
+            n_iter=100000,
+            burning=95000,
             particle_idx=particle_idx)
-        print(f'[event {n}, particle {particle_idx + 1}]: Updating trigger kernel……')
+        print(f'[event {n}, particle {particle_idx + 1}] Updating trigger kernel……')
         particle.update_trigger_kernel(lambda_0_candi_list=lambda_0_candi_list,
                                        beta_candi_list=beta_candi_list,
                                        tau_candi_list=tau_candi_list)
-        print(f'[event {n}, particle {particle_idx + 1}]: Updating particle weight……')
-        particle.update_paricle_weight(old_particle_weight=self.particle_weight_list[particle_idx], t=self.t, T=self.T,
+        print(f'[event {n}, particle {particle_idx + 1}] Updating particle weight……')
+        particle.update_paricle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
                                        event_order=n)
-        self.particle_weight_list[particle_idx] = particle.new_particle_weight
+        return particle_idx, particle
 
-    def filtering(self):
+    def update_particle_weight_arr(self, particle_index_list: [(int, Particle)]):
         """
-        IBHP模型粒子滤波参数估计方法的主要步骤
+        更新粒子权重列表
+        :param particle_index_list:
         :return:
         """
-        # 采样第1个event对应的粒子状态，并对每个event的粒子权重进行归一化，判断是否进行重采样
-        # 使用线程池并行采样每个粒子
-        mg = Manager()
-        particle_index_pair_list = [(idx, particle) for idx, particle
-                                    in enumerate(self.particle_list)]  # 这个list里的粒子实例会更新
-        # 创建进程池能够管理的list类型
-        particle_index_pair_list = mg.list(particle_index_pair_list)
-        # event 1对应的进程池, 为什么粒子的状态没有变呢。。。
-        pool_event_1 = Pool(processes=self.n_particle)
-        pool_event_1.map(self.generate_first_event4paricle, particle_index_pair_list)
-        pool_event_1.close()
-        pool_event_1.join()
-
-        # Normalize the particle weights
-        print(f'[event 1]: Normalizing particle weight……')
-        self.normalize_particle_weight()
-        print(f'[event 1]: Normalized particle weight: \n{self.particle_weight_list}')
-        # Resample particles with replacement
-        # 计算N_eff（有效粒子数）
-        N_eff = 1 / np.sum(np.square(self.particle_weight_list))
-        # N_eff小于2/3 * N时重采样
-        if N_eff < 2 / 3 * self.n_particle:
-            print(f'[event 1]: Resampling particles……')
-            self.resample_particles()
-        # 输出最好的10个粒子的数据
-        for i in np.argsort(- self.particle_weight_list)[: 10]:
-            print(f'[event 1, particle {i + 1}] weight: {self.particle_list[i].new_particle_weight}')
-            print(f'[event 1, particle {i + 1}] lambda_0: {self.particle_list[i].lambda_0[-1]}')
-            print(f'[event 1, particle {i + 1}] beta: {self.particle_list[i].beta}')
-            print(f'[event 1, particle {i + 1}] tau: {self.particle_list[i].tau}')
-
-        # 继续采样第2～n个event粒子的状态, 并对每个event的粒子权重进行归一化，判断是否进行重采样
-        for n in np.arange(2, self.n_sample + 1):
-            # event n对应的线程池
-            pool_event_n = Pool(processes=self.n_particle)
-            pool_event_n.map(partial(self.generate_following_event4paritcle, n=n), particle_index_pair_list)
-            pool_event_n.close()
-            pool_event_n.join()
-
-            print(f'[event {n}]: Normalizing particle weight……')
-            self.normalize_particle_weight()
-            print(f'[event {n}]: Normalized particle weight: {self.particle_weight_list}')
-            N_eff = 1 / np.sum(np.square(self.particle_weight_list))
-            if N_eff < 2 / 3 * self.n_particle:
-                print(f'[event {n}]: Resampling particles……')
-                self.resample_particles()
-            for i in np.argsort(- self.particle_weight_list)[: 10]:
-                print(f'[event {n}, particle {i + 1}] weight: {self.particle_list[i].new_particle_weight}')
-                print(f'[event {n}, particle {i + 1}] lambda_0: {self.particle_list[i].lambda_0[-1]}')
-                print(f'[event {n}, particle {i + 1}] beta: {self.particle_list[i].beta}')
-                print(f'[event {n}, particle {i + 1}] tau: {self.particle_list[i].tau}')
+        for idx, particle in particle_index_list:
+            print(f'[particle {idx + 1}] new_particle_weight: {particle.new_particle_weight}')
+            self.particle_weight_arr[idx] = particle.new_particle_weight
 
 
-# noinspection SpellCheckingInspection,PyPep8Naming
-def main(n_sample=10):
+if __name__ == '__main__':
+    # 生成测试数据
+    FLAG = True
+    # noinspection SpellCheckingInspection
     ibhp = IBHP()
+    n_sample = 50
     ibhp.generate_data(n_sample=n_sample)
     print(f'\n{"-" * 40} 生成的观测数据 {"-" * 40}\n')
     print(f'时间戳：{ibhp.timestamp}\n')
     print(f'文本：{transfer_multi_dist_res2vec(ibhp.T)}\n')
     word_corpus = np.arange(100)
     print(f'词典：{word_corpus}\n')
-    print(f'\n{"-" * 40} 开始粒子滤波参数估计 {"-" * 40}\n')
-    pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=100, word_corpus=word_corpus, L=3)
-    pf.filtering()
 
+    # filtering
+    while FLAG:
+        # noinspection PyBroadException
+        try:
+            print(f'\n{"-" * 40} 开始粒子滤波参数估计 {"-" * 40}\n')
+            pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=1000, word_dict=word_corpus, L=3)
+            particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
+            # event 1 status
+            pool_event_1 = Pool(24)
+            particle_index_pair_list = list(pool_event_1.map(pf.generate_first_event_status_for_each_paricle,
+                                                             particle_index_pair_list))
+            pool_event_1.close()
+            pool_event_1.join()
+            pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
+            pf.normalize_particle_weight()
+            print(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
+            N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
+            if N_eff < 2 / 3 * pf.get_particle_num():
+                print(f'[event 1] Resampling particles……')
+                pf.resample_particles()
 
-if __name__ == '__main__':
-    main()
+            # event 2~n status
+            for n in np.arange(2, n_sample + 1):
+                # event n对应的线程池
+                pool_event_n = Pool(24)
+                particle_index_pair_list = list(
+                    pool_event_n.map(partial(pf.generate_following_event_status_for_each_paritcle, n=n),
+                                     particle_index_pair_list))
+                pool_event_n.close()
+                pool_event_n.join()
+                pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
+                pf.normalize_particle_weight()
+                print(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
+                N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
+                if N_eff < 2 / 3 * pf.get_particle_num():
+                    print(f'[event {n}] Resampling particles……')
+                    pf.resample_particles()
+
+            # 输出最终结果
+            # 粒子权重
+            p_weight_arr = pf.get_partcie_weight_arr()
+            p_list = pf.get_particle_list()
+            print(f'所有粒子的权重：{p_weight_arr}\n')
+
+            # 超参数加权平均
+            lam_0_arr = np.array([particle.lambda_0[-1] for particle in p_list])
+            lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
+            beta_arr = np.array([particle.beta.reshape(-1) for particle in p_list])
+            beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
+            tau_arr = np.array([particle.tau.reshape(-1) for particle in p_list])
+            tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
+            print(f'三个超参数的加权平均值：\n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+
+            # kappa矩阵，输出最好的100个粒子
+            for idx in np.argsort(-p_weight_arr)[: 100]:
+                print('最好的100个粒子的kappa')
+                print(f'粒子{idx + 1}的kappa: {p_list[idx].kappa}\n')
+            FLAG = False
+        except Exception as e:
+            print(f'Error occurred: {e}, retry')
+            continue
