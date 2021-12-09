@@ -10,7 +10,8 @@
 """
 from collections import Counter
 from functools import partial
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,15 +66,6 @@ class Particle(IBHP):
         self.word_corpus = word_corpus
         self.S = len(self.word_corpus)
         self.kappa_all = None
-
-        # 测试粒子并行更新
-        # self.kappa_all = np.arange(1)
-        # self.kappa = np.zeros((1, 1))
-        # self.new_particle_weight = 1
-        # self.lambda_0 = np.zeros(1)
-        # self.beta = np.zeros((1, self.L))
-        # self.tau = np.zeros((1, self.L))
-        # self.K = 1
 
     def sample_first_event_particle(self, shape_lammbda0, scale_lambda0, shape_beta, scale_beta, shape_tau, scale_tau):
         """
@@ -549,7 +541,7 @@ class Particle_Filter:
         self.particle_list = new_particle_list
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
 
-    def generate_first_event_status_for_each_paricle(self, particle_idx_pair: (int, Particle)):
+    def generate_first_event_status_for_each_paricle(self, particle_idx_pair: Tuple[int, Particle]):
         """
         给每个粒子生成第一个event对应的状态
         :param particle_idx_pair:
@@ -590,7 +582,7 @@ class Particle_Filter:
                                        event_order=1)
         return particle_idx, particle
 
-    def generate_following_event_status_for_each_paritcle(self, particle_idx_pair: (int, Particle), n: int):
+    def generate_following_event_status_for_each_paritcle(self, particle_idx_pair: Tuple[int, Particle], n: int):
         """
 
         :param n:
@@ -628,7 +620,7 @@ class Particle_Filter:
                                        event_order=n)
         return particle_idx, particle
 
-    def update_particle_weight_arr(self, particle_index_list: [(int, Particle)]):
+    def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
         """
         更新粒子权重列表
         :param particle_index_list:
@@ -644,23 +636,23 @@ if __name__ == '__main__':
     FLAG = True
     # noinspection SpellCheckingInspection
     ibhp = IBHP()
-    n_sample = 50
+    n_sample = 10
     ibhp.generate_data(n_sample=n_sample)
     print(f'\n{"-" * 40} 生成的观测数据 {"-" * 40}\n')
-    print(f'时间戳：{ibhp.timestamp}\n')
-    print(f'文本：{transfer_multi_dist_res2vec(ibhp.T)}\n')
+    print(f'时间戳: {ibhp.timestamp}\n')
+    print(f'文本: {transfer_multi_dist_res2vec(ibhp.T)}\n')
     word_corpus = np.arange(100)
-    print(f'词典：{word_corpus}\n')
+    print(f'词典: {word_corpus}\n')
 
     # filtering
     while FLAG:
         # noinspection PyBroadException
         try:
             print(f'\n{"-" * 40} 开始粒子滤波参数估计 {"-" * 40}\n')
-            pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=1000, word_dict=word_corpus, L=3)
+            pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=200, word_dict=word_corpus, L=3)
             particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
             # event 1 status
-            pool_event_1 = Pool(24)
+            pool_event_1 = Pool(cpu_count())
             particle_index_pair_list = list(pool_event_1.map(pf.generate_first_event_status_for_each_paricle,
                                                              particle_index_pair_list))
             pool_event_1.close()
@@ -676,7 +668,7 @@ if __name__ == '__main__':
             # event 2~n status
             for n in np.arange(2, n_sample + 1):
                 # event n对应的线程池
-                pool_event_n = Pool(24)
+                pool_event_n = Pool(cpu_count())
                 particle_index_pair_list = list(
                     pool_event_n.map(partial(pf.generate_following_event_status_for_each_paritcle, n=n),
                                      particle_index_pair_list))
@@ -694,7 +686,7 @@ if __name__ == '__main__':
             # 粒子权重
             p_weight_arr = pf.get_partcie_weight_arr()
             p_list = pf.get_particle_list()
-            print(f'所有粒子的权重：{p_weight_arr}\n')
+            print(f'所有粒子的权重: {p_weight_arr}\n')
 
             # 超参数加权平均
             lam_0_arr = np.array([particle.lambda_0[-1] for particle in p_list])
@@ -703,7 +695,7 @@ if __name__ == '__main__':
             beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
             tau_arr = np.array([particle.tau.reshape(-1) for particle in p_list])
             tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-            print(f'三个超参数的加权平均值：\n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+            print(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
 
             # kappa矩阵，输出最好的100个粒子
             for idx in np.argsort(-p_weight_arr)[: 100]:
