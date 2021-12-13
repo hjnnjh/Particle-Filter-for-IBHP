@@ -51,12 +51,13 @@ def plot_mh_res(arr, title: str):
     plt.show()
 
 
-# noinspection PyAttributeOutsideInit,PyMissingConstructor,SpellCheckingInspection,DuplicatedCode,PyPep8Naming
+# noinspection PyAttributeOutsideInit,PyMissingConstructor,DuplicatedCode,PyPep8Naming,PyShadowingNames
 class Particle(IBHP):
     """
     这个类中实现了单个粒子的采样、超参数更新、粒子权重计算的所有的步骤
     """
 
+    # noinspection PyShadowingNames
     def __init__(self, word_corpus: np.ndarray, L: int = 3):
         """
         :param L: base kernel的数量
@@ -67,13 +68,13 @@ class Particle(IBHP):
         self.S = len(self.word_corpus)
         self.kappa_all = None
 
-    def sample_first_event_particle(self, shape_lammbda0, scale_lambda0, shape_beta, scale_beta, shape_tau, scale_tau):
+    def sample_first_event_particle(self, shape_lambda0, scale_lambda0, shape_beta, scale_beta, shape_tau, scale_tau):
         """
         生成first event对应的粒子
         :return:
         """
         # 初始化lambda_0, beta_l, tau_l
-        self.lambda_0 = np.random.gamma(shape_lammbda0, scale_lambda0, 1)  # array, shape=(1, )
+        self.lambda_0 = np.random.gamma(shape_lambda0, scale_lambda0, 1)  # array, shape=(1, )
         self.beta = np.random.gamma(shape_beta, scale_beta, self.L).reshape(-1, self.L)  # matrix, shape=(1, L)
         self.tau = np.random.gamma(shape_tau, scale_tau, self.L).reshape(-1, self.L)  # array, shape=(1, L),
 
@@ -550,7 +551,7 @@ class Particle_Filter:
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
         print(f'[event 1, paricle {particle_idx + 1}] Sampling particle status……')
-        particle.sample_first_event_particle(shape_lammbda0=2, scale_lambda0=2, shape_beta=2, scale_beta=2,
+        particle.sample_first_event_particle(shape_lambda0=2, scale_lambda0=2, shape_beta=2, scale_beta=2,
                                              shape_tau=2, scale_tau=2)
         lambda_0_candi_list, beta_candi_list, tau_candi_list = particle.sample_hyperparams(
             lambda0_proposal_shape=3,
@@ -567,8 +568,8 @@ class Particle_Filter:
             tau_prior_scale=2,
             t=self.t,
             event_order=1,
-            n_iter=100000,
-            burning=95000,
+            n_iter=30000,
+            burning=25000,
             particle_idx=particle_idx)
         # Update the triggering kernels
         print(f'[event 1, paricle {particle_idx + 1}] Updating trigger kernel……')
@@ -608,8 +609,8 @@ class Particle_Filter:
             tau_prior_scale=2,
             t=self.t,
             event_order=n,
-            n_iter=100000,
-            burning=95000,
+            n_iter=30000,
+            burning=25000,
             particle_idx=particle_idx)
         print(f'[event {n}, particle {particle_idx + 1}] Updating trigger kernel……')
         particle.update_trigger_kernel(lambda_0_candi_list=lambda_0_candi_list,
@@ -636,7 +637,7 @@ if __name__ == '__main__':
     FLAG = True
     # noinspection SpellCheckingInspection
     ibhp = IBHP()
-    n_sample = 10
+    n_sample = 5
     ibhp.generate_data(n_sample=n_sample)
     print(f'\n{"-" * 40} 生成的观测数据 {"-" * 40}\n')
     print(f'时间戳: {ibhp.timestamp}\n')
@@ -677,6 +678,8 @@ if __name__ == '__main__':
                 pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
                 pf.normalize_particle_weight()
                 print(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
+                if n == n_sample:
+                    break
                 N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
                 if N_eff < 2 / 3 * pf.get_particle_num():
                     print(f'[event {n}] Resampling particles……')
@@ -685,22 +688,21 @@ if __name__ == '__main__':
             # 输出最终结果
             # 粒子权重
             p_weight_arr = pf.get_partcie_weight_arr()
-            p_list = pf.get_particle_list()
             print(f'所有粒子的权重: {p_weight_arr}\n')
 
             # 超参数加权平均
-            lam_0_arr = np.array([particle.lambda_0[-1] for particle in p_list])
+            lam_0_arr = np.array([particle.lambda_0[-1] for idx, particle in particle_index_pair_list])
             lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-            beta_arr = np.array([particle.beta.reshape(-1) for particle in p_list])
+            beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
             beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
-            tau_arr = np.array([particle.tau.reshape(-1) for particle in p_list])
+            tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
             tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
             print(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
 
-            # kappa矩阵，输出最好的100个粒子
-            for idx in np.argsort(-p_weight_arr)[: 100]:
-                print('最好的100个粒子的kappa')
-                print(f'粒子{idx + 1}的kappa: {p_list[idx].kappa}\n')
+            # # kappa矩阵，输出最好的100个粒子
+            # for idx in np.argsort(-p_weight_arr)[: 50]:
+            #     print('最好的100个粒子的kappa')
+            #     print(f'粒子{idx + 1}的kappa: {particle_index_pair_list[idx].kappa}\n')
             FLAG = False
         except Exception as e:
             print(f'Error occurred: {e}, retry')
