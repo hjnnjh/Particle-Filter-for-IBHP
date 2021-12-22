@@ -8,6 +8,7 @@
 @Contact :   jinnan_huang@stu.xjtu.edu.cn
 @Desc    :   None
 """
+import logging
 from collections import Counter
 from functools import partial
 from multiprocessing import Pool, cpu_count
@@ -19,6 +20,8 @@ from scipy.stats import gamma as scipy_gamma_dist
 from tqdm import tqdm
 
 from IBHP_sim import IBHP
+
+logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
 
 
 # noinspection PyPep8Naming
@@ -68,9 +71,10 @@ class Particle(IBHP):
         self.S = len(self.word_corpus)
         self.kappa_all = None
 
-    def sample_first_event_particle(self, shape_lambda0, scale_lambda0, shape_beta, scale_beta, shape_tau, scale_tau):
+    def sample_first_particle_event_status(self, shape_lambda0, scale_lambda0, shape_beta, scale_beta, shape_tau,
+                                           scale_tau):
         """
-        生成first event对应的粒子
+        生成first event对应的粒子状态
         :return:
         """
         # 初始化lambda_0, beta_l, tau_l
@@ -84,7 +88,7 @@ class Particle(IBHP):
         # 生成K
         self.K = np.random.poisson(self.lambda_0[-1], 1)[0]  # K: int
         while self.K == 0:
-            print(f'[event 1] 初始化生成的主题数K为0，重新生成')
+            logging.info(f'[event 1] 初始化生成的主题数K为0，重新生成')
             self.K = np.random.poisson(self.lambda_0[-1], 1)[0]
 
         # 生成主题出现情况矩阵c, 令所有c_k=1
@@ -104,9 +108,9 @@ class Particle(IBHP):
         # update kappa_all
         self.kappa_all = self.kappa.copy().reshape(-1)
 
-    def sample_following_event_particle(self, n: int):
+    def sample_particle_following_event_status(self, n: int):
         """
-        生成following event对应的粒子
+        生成following event对应的粒子状态
         :param n: 第n个event
         :return:
         """
@@ -129,7 +133,7 @@ class Particle(IBHP):
         # 当K+等于0时，检查c_old是不是全为0，如果全为0，则重新生成c_old
         if k_plus == 0:
             while np.all(c_old == 0):
-                print(f'[event {n}]当K+为0时，c_old也全为0，重新生成c_old')
+                logging.info(f'[event {n}]当K+为0时，c_old也全为0，重新生成c_old')
                 c_old = generate_old_c_func(p)
         # 更新K
         self.K = self.K + k_plus
@@ -167,10 +171,10 @@ class Particle(IBHP):
             kappa_old = self.kappa_all * c_old  # 根据已有的主题出现情况更新old kappa
             self.kappa = np.vstack((self.kappa, kappa_old))
 
-        # print(f'n={n}时主题出现情况：{self.c}\n')
-        # print(f'n={n}时base kernel的权重：{self.w}\n')
-        # print(f'n={n}时的factor kernel：{self.kappa}\n')
-        # print(f'n={n}时主题的词分布：{self.v}\n')
+        # logging.info(f'n={n}时主题出现情况：{self.c}\n')
+        # logging.info(f'n={n}时base kernel的权重：{self.w}\n')
+        # logging.info(f'n={n}时的factor kernel：{self.kappa}\n')
+        # logging.info(f'n={n}时主题的词分布：{self.v}\n')
 
         # 计算lambda_tn, 并将lambda_tn加入self.lambda_arr
         non_zero_kappa_idx = np.argwhere(self.kappa[-1, :] != 0)[:, 0]
@@ -438,7 +442,7 @@ class Particle(IBHP):
         self.beta = np.array(beta_candi_list).mean(axis=1).reshape(1, -1)
         self.tau = np.array(tau_candi_list).mean(axis=1).reshape(1, -1)
 
-    def update_paricle_weight(self, old_particle_weight, t: np.ndarray, T: np.ndarray, event_order: int):
+    def update_particle_weight(self, old_particle_weight, t: np.ndarray, T: np.ndarray, event_order: int):
         """
         更新粒子权重
 
@@ -550,9 +554,9 @@ class Particle_Filter:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        print(f'[event 1, paricle {particle_idx + 1}] Sampling particle status……')
-        particle.sample_first_event_particle(shape_lambda0=2, scale_lambda0=2, shape_beta=2, scale_beta=2,
-                                             shape_tau=2, scale_tau=2)
+        logging.info(f'[event 1, paricle {particle_idx + 1}] Sampling particle status……')
+        particle.sample_first_particle_event_status(shape_lambda0=2, scale_lambda0=2, shape_beta=2, scale_beta=2,
+                                                    shape_tau=2, scale_tau=2)
         lambda_0_candi_list, beta_candi_list, tau_candi_list = particle.sample_hyperparams(
             lambda0_proposal_shape=3,
             lambda0_proposal_scale=2,
@@ -572,15 +576,15 @@ class Particle_Filter:
             burning=25000,
             particle_idx=particle_idx)
         # Update the triggering kernels
-        print(f'[event 1, paricle {particle_idx + 1}] Updating trigger kernel……')
+        logging.info(f'[event 1, paricle {particle_idx + 1}] Updating trigger kernel……')
         particle.update_trigger_kernel(lambda_0_candi_list=lambda_0_candi_list,
                                        beta_candi_list=beta_candi_list,
                                        tau_candi_list=tau_candi_list)
 
         # Calculate and update the log particle weights
-        print(f'[event 1, paricle {particle_idx + 1}] Updating particle weight……')
-        particle.update_paricle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
-                                       event_order=1)
+        logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight……')
+        particle.update_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
+                                        event_order=1)
         return particle_idx, particle
 
     def generate_following_event_status_for_each_paritcle(self, particle_idx_pair: Tuple[int, Particle], n: int):
@@ -592,8 +596,8 @@ class Particle_Filter:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        print(f'[event {n}, particle {particle_idx + 1}] Sampling particle status……')
-        particle.sample_following_event_particle(n)
+        logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status……')
+        particle.sample_particle_following_event_status(n)
         lambda_0_candi_list, beta_candi_list, tau_candi_list = particle.sample_hyperparams(
             lambda0_proposal_shape=3,
             lambda0_proposal_scale=2,
@@ -612,13 +616,13 @@ class Particle_Filter:
             n_iter=30000,
             burning=25000,
             particle_idx=particle_idx)
-        print(f'[event {n}, particle {particle_idx + 1}] Updating trigger kernel……')
+        logging.info(f'[event {n}, particle {particle_idx + 1}] Updating trigger kernel……')
         particle.update_trigger_kernel(lambda_0_candi_list=lambda_0_candi_list,
                                        beta_candi_list=beta_candi_list,
                                        tau_candi_list=tau_candi_list)
-        print(f'[event {n}, particle {particle_idx + 1}] Updating particle weight……')
-        particle.update_paricle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
-                                       event_order=n)
+        logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight……')
+        particle.update_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], t=self.t, T=self.T,
+                                        event_order=n)
         return particle_idx, particle
 
     def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
@@ -628,7 +632,7 @@ class Particle_Filter:
         :return:
         """
         for idx, particle in particle_index_list:
-            print(f'[particle {idx + 1}] new_particle_weight: {particle.new_particle_weight}')
+            logging.info(f'[particle {idx + 1}] new_particle_weight: {particle.new_particle_weight}')
             self.particle_weight_arr[idx] = particle.new_particle_weight
 
 
@@ -639,17 +643,17 @@ if __name__ == '__main__':
     ibhp = IBHP()
     n_sample = 5
     ibhp.generate_data(n_sample=n_sample)
-    print(f'\n{"-" * 40} 生成的观测数据 {"-" * 40}\n')
-    print(f'时间戳: {ibhp.timestamp}\n')
-    print(f'文本: {transfer_multi_dist_res2vec(ibhp.T)}\n')
+    logging.info(f'\n{"-" * 40} 生成的观测数据 {"-" * 40}\n')
+    logging.info(f'时间戳: {ibhp.timestamp}\n')
+    logging.info(f'文本: {transfer_multi_dist_res2vec(ibhp.T)}\n')
     word_corpus = np.arange(100)
-    print(f'词典: {word_corpus}\n')
+    logging.info(f'词典: {word_corpus}\n')
 
     # filtering
     while FLAG:
         # noinspection PyBroadException
         try:
-            print(f'\n{"-" * 40} 开始粒子滤波参数估计 {"-" * 40}\n')
+            logging.info(f'\n{"-" * 40} 开始粒子滤波参数估计 {"-" * 40}\n')
             pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=200, word_dict=word_corpus, L=3)
             particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
             # event 1 status
@@ -660,10 +664,10 @@ if __name__ == '__main__':
             pool_event_1.join()
             pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
             pf.normalize_particle_weight()
-            print(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
+            logging.info(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
             N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
             if N_eff < 2 / 3 * pf.get_particle_num():
-                print(f'[event 1] Resampling particles……')
+                logging.info(f'[event 1] Resampling particles……')
                 pf.resample_particles()
 
             # event 2~n status
@@ -677,18 +681,18 @@ if __name__ == '__main__':
                 pool_event_n.join()
                 pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
                 pf.normalize_particle_weight()
-                print(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
+                logging.info(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
                 if n == n_sample:
                     break
                 N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
                 if N_eff < 2 / 3 * pf.get_particle_num():
-                    print(f'[event {n}] Resampling particles……')
+                    logging.info(f'[event {n}] Resampling particles……')
                     pf.resample_particles()
 
             # 输出最终结果
             # 粒子权重
             p_weight_arr = pf.get_partcie_weight_arr()
-            print(f'所有粒子的权重: {p_weight_arr}\n')
+            logging.info(f'所有粒子的权重: {p_weight_arr}\n')
 
             # 超参数加权平均
             lam_0_arr = np.array([particle.lambda_0[-1] for idx, particle in particle_index_pair_list])
@@ -697,13 +701,13 @@ if __name__ == '__main__':
             beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
             tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
             tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-            print(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+            logging.info(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
 
             # # kappa矩阵，输出最好的100个粒子
             # for idx in np.argsort(-p_weight_arr)[: 50]:
-            #     print('最好的100个粒子的kappa')
-            #     print(f'粒子{idx + 1}的kappa: {particle_index_pair_list[idx].kappa}\n')
+            #     logging.info('最好的100个粒子的kappa')
+            #     logging.info(f'粒子{idx + 1}的kappa: {particle_index_pair_list[idx].kappa}\n')
             FLAG = False
         except Exception as e:
-            print(f'Error occurred: {e}, retry')
+            logging.info(f'Error occurred: {e}, retry', exc_info=True)
             continue
