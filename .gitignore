@@ -134,3 +134,4 @@ dataset/
 img/
 *.ipynb
 .vscode/
+pyro_sample.py
