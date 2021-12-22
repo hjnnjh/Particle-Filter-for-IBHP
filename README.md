@@ -1,6 +1,7 @@
 # Particle-Filter-for-IBHP
 
-Particle Filter for IBHP(Python Realization). Paper: ***The Indian Buffet Hawkes Process to Model Evolving Latent Influences***
+- Particle Filter for IBHP(Python Realization). Paper: ***The Indian Buffet Hawkes Process to Model Evolving Latent Influences***.
+- **Pyro** realization(Accelerated by PyTorch) is coming soon.
 
 ## Update Particle Weight
 
