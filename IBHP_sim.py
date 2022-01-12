@@ -15,7 +15,7 @@ import numpy as np
 
 logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
 logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.WARNING)
-logging.disable(logging.INFO)
+# logging.disable(logging.INFO)
 
 
 # noinspection SpellCheckingInspection,PyPep8Naming,DuplicatedCode
@@ -184,7 +184,7 @@ class IBHP:
             self.v = np.hstack((self.v, new_v))
         logging.info(f'n={n}时的词分布：{self.v}')
 
-        # calculate Lambda(t_n)，这儿有点问题
+        # calculate Lambda(t_n)
         non_zero_kappa_idx = np.argwhere(self.kappa[-1, :] != 0)[:, 0]
         Lambda_tn_arr = np.einsum('ij->j', self.kappa / np.count_nonzero(self.kappa, axis=1).
                                   reshape(self.kappa.shape[0], -1))
@@ -217,9 +217,3 @@ if __name__ == '__main__':
     # noinspection SpellCheckingInspection
     ibhp_ins = IBHP()
     ibhp_ins.generate_data(n_sample=100)
-    # for i in range(100):
-    #     try:
-    #         ibhp_ins.generate_data(n_sample=100)
-    #     except Exception as e:
-    #         logging.error(f'Error: {e}', exc_info=True)
-    #         break
