@@ -9,6 +9,7 @@
 @Desc    :   None
 """
 import logging
+import sys
 from collections import Counter
 from functools import partial
 from multiprocessing import Pool, cpu_count
@@ -189,8 +190,8 @@ class Particle(IBHP):
             self.c = np.vstack((self.c, c_old))
             self.update_old_kappa(delta_t_vec)
 
-        logging.info(f'n={n}时主题出现情况：{self.c}\n')
-        logging.info(f'n={n}时的factor kernel：{self.kappa}\n')
+        # logging.info(f'n={n}时主题出现情况：{self.c}\n')
+        # logging.info(f'n={n}时的factor kernel：{self.kappa}\n')
 
         # 计算lambda_tn, 并将lambda_tn加入self.lambda_arr
         non_zero_kappa_idx = np.argwhere(self.kappa[-1, :] != 0)[:, 0]
@@ -259,8 +260,8 @@ class Particle(IBHP):
         return scipy_gamma_dist.pdf(x=x, a=shape, scale=scale)
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_all_hyperparameters(self, N: int, shape_lambda0, scale_lambda0, shape_beta, scale_beta,
-                                   shape_tau, scale_tau, t_vec: np.ndarray, n):
+    def update_all_hyperparameters(self, shape_lambda0, scale_lambda0, shape_beta, scale_beta,
+                                   shape_tau, scale_tau, t_vec: np.ndarray, n, N: int = 10000):
         """
         update lambda0, beta, tau
         :param N: sample numbers
@@ -420,9 +421,10 @@ class Particle_Filter:
         self.particle_list = new_particle_list
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
 
-    def generate_first_event_status_for_each_paricle(self, particle_idx_pair: Tuple[int, Particle]):
+    def generate_first_event_status_for_each_paricle(self, parameter_num: int, particle_idx_pair: Tuple[int, Particle]):
         """
         Generate the state corresponding to the first event for each particle
+        :param parameter_num: Number of parameter samples to be sampled
         :param particle_idx_pair:
         :return:
         """
@@ -434,7 +436,7 @@ class Particle_Filter:
                                                     shape_tau=1, scale_tau=1)
         # Update hyperparameters and triggering kernels
         logging.info(f'[event 1, paricle {particle_idx + 1}] Updating hyperparameters and trigger kernel……')
-        particle.update_all_hyperparameters(N=10000,
+        particle.update_all_hyperparameters(N=parameter_num,
                                             shape_lambda0=1, scale_lambda0=1,
                                             shape_beta=1, scale_beta=1,
                                             shape_tau=1, scale_tau=1,
@@ -447,9 +449,11 @@ class Particle_Filter:
                                             event_order=1)
         return particle_idx, particle
 
-    def generate_following_event_status_for_each_paritcle(self, particle_idx_pair: Tuple[int, Particle], n: int):
+    def generate_following_event_status_for_each_paritcle(self, n: int, parameter_num: int,
+                                                          particle_idx_pair: Tuple[int, Particle]):
         """
 
+        :param parameter_num: Number of parameter samples to be sampled
         :param n:
         :param particle_idx_pair:
         :return:
@@ -459,7 +463,7 @@ class Particle_Filter:
         logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status……')
         particle.sample_particle_following_event_status(self.t, n)
         logging.info(f'[event {n}, particle {particle_idx + 1}] Updating hyperparameters and trigger kernel……')
-        particle.update_all_hyperparameters(N=10000,
+        particle.update_all_hyperparameters(N=parameter_num,
                                             shape_lambda0=1, scale_lambda0=1,
                                             shape_beta=1, scale_beta=1,
                                             shape_tau=1, scale_tau=1,
@@ -472,21 +476,29 @@ class Particle_Filter:
 
     def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
         """
-        更新粒子权重列表
+        Update particle weight list
         :param particle_index_list:
         :return:
         """
         for idx, particle in particle_index_list:
-            logging.info(f'[particle {idx + 1}] new_particle_weight: {particle.new_log_particle_weight}')
+            # logging.info(f'[particle {idx + 1}] new_particle_weight: {particle.new_log_particle_weight}')
             self.particle_weight_arr[idx] = particle.new_log_particle_weight
 
 
 # noinspection SpellCheckingInspection
 if __name__ == '__main__':
     # Generate test data
+    # parameters
+    n_sample = int(sys.argv[1])
+    n_particle = int(sys.argv[2])
+    parameter_sample_num = int(sys.argv[3])
+
+    logging.info(f'set n_sample to {n_sample}')
+    logging.info(f'set n_particle to {n_particle}')
+    logging.info(f'set N to {parameter_sample_num}')
+
     # noinspection SpellCheckingInspection
     ibhp = IBHP()
-    n_sample = 100
     ibhp.generate_data(n_sample=n_sample)
     logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
     logging.info(f'Timestamp: {ibhp.timestamp}\n')
@@ -497,11 +509,12 @@ if __name__ == '__main__':
     # filtering
     # noinspection PyBroadException,SpellCheckingInspection
     logging.info(f'\n{"-" * 40}  Start particle filter parameter estimation {"-" * 40}\n')
-    pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=10000, word_dict=word_corpus, L=3)
+    pf = Particle_Filter(t=ibhp.timestamp, T=ibhp.T, n_particle=n_particle, word_dict=word_corpus, L=3)
     particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
     # event 1 status
     pool_event_1 = Pool(cpu_count())
-    particle_index_pair_list = list(pool_event_1.map(pf.generate_first_event_status_for_each_paricle,
+    particle_index_pair_list = list(pool_event_1.map(partial(pf.generate_first_event_status_for_each_paricle,
+                                                             parameter_sample_num),
                                                      particle_index_pair_list))
     pool_event_1.close()
     pool_event_1.join()
@@ -514,17 +527,33 @@ if __name__ == '__main__':
         pf.resample_particles()
 
     # event 2~n status
+    # noinspection SpellCheckingInspection
     for n in np.arange(2, n_sample + 1):
         # process pool for event n
         pool_event_n = Pool(cpu_count())
         particle_index_pair_list = list(
-            pool_event_n.map(partial(pf.generate_following_event_status_for_each_paritcle, n=n),
+            pool_event_n.map(partial(pf.generate_following_event_status_for_each_paritcle, n, parameter_sample_num),
                              particle_index_pair_list))
         pool_event_n.close()
         pool_event_n.join()
         pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
         pf.normalize_particle_weight()
+
+        # output
         logging.info(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
+        # particle weight
+        p_weight_arr = pf.get_partcie_weight_arr()
+        logging.info(f'所有粒子的权重: {p_weight_arr}\n')
+
+        # Hyperparameters weighted average
+        lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
+        lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
+        beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
+        beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
+        tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
+        tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
+        logging.info(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+
         if n == n_sample:
             break
         N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
@@ -532,16 +561,16 @@ if __name__ == '__main__':
             logging.info(f'[event {n}] Resampling particles……')
             pf.resample_particles()
 
-    # Output final result
-    # particle weight
-    p_weight_arr = pf.get_partcie_weight_arr()
-    logging.info(f'所有粒子的权重: {p_weight_arr}\n')
-
-    # Hyperparameters weighted average
-    lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
-    lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-    beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
-    beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
-    tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
-    tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-    logging.info(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+    # # Output final result
+    # # particle weight
+    # p_weight_arr = pf.get_partcie_weight_arr()
+    # logging.info(f'所有粒子的权重: {p_weight_arr}\n')
+    #
+    # # Hyperparameters weighted average
+    # lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
+    # lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
+    # beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
+    # beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
+    # tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
+    # tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
+    # logging.info(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
