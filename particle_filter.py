@@ -560,17 +560,3 @@ if __name__ == '__main__':
         if N_eff < 2 / 3 * pf.get_particle_num():
             logging.info(f'[event {n}] Resampling particles……')
             pf.resample_particles()
-
-    # # Output final result
-    # # particle weight
-    # p_weight_arr = pf.get_partcie_weight_arr()
-    # logging.info(f'所有粒子的权重: {p_weight_arr}\n')
-    #
-    # # Hyperparameters weighted average
-    # lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
-    # lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-    # beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
-    # beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
-    # tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
-    # tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-    # logging.info(f'三个超参数的加权平均值: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
