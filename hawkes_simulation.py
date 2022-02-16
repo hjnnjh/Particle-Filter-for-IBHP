@@ -10,7 +10,9 @@
 """
 
 import logging
+from functools import partial
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -121,6 +123,15 @@ class HawkesSimulation:
     def simulation(self):
         self.generate_first_event()
         self.general_routine()
+
+    def plot_intensity(self):
+        fig, ax = plt.subplots(figsize=(15, 10), dpi=400)
+        t_array = np.linspace(0, 30, 30000)
+        intensity_function_map = np.vectorize(partial(self.intensity_function, self.lambda0, self.Y,
+                                                      self.generated_timestamp_array, self.delta))
+        lambda_array = intensity_function_map(t_array)
+        ax.plot(t_array, lambda_array)
+        plt.show()
 
 
 if __name__ == '__main__':
