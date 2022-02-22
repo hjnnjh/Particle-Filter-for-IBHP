@@ -10,10 +10,10 @@
 """
 
 import logging
-from functools import partial
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+from functools import partial
 
 
 # noinspection SpellCheckingInspection,PyPep8Naming
@@ -52,7 +52,7 @@ class HawkesSimulation:
             return self.generated_timestamp_array
 
     @staticmethod
-    def intensity_function(lambda_0_t, Y, t, T_array, delta):
+    def intensity_function(lambda_0_t, Y, T_array: np.ndarray, delta, t):
         """
         intensity of Hawkes process
         :type delta:
@@ -62,7 +62,7 @@ class HawkesSimulation:
         :param T_array:
         :return:
         """
-        lambda_t_condi_history = lambda_0_t + np.sum(Y * np.exp(- delta * (t - T_array)))
+        lambda_t_condi_history = lambda_0_t + np.sum(Y * np.exp(- delta * (t - T_array[T_array <= t])))
         return lambda_t_condi_history
 
     def update_maximum_intensity(self):
@@ -120,7 +120,7 @@ class HawkesSimulation:
                     if sub_rejection_test_result is 'passed':
                         FLAG = False
 
-    def simulation(self):
+    def simulate(self):
         self.generate_first_event()
         self.general_routine()
 
@@ -136,4 +136,5 @@ class HawkesSimulation:
 
 if __name__ == '__main__':
     hk_sim = HawkesSimulation(lambda0=0.5, T=30, Y=0.15, delta=1)
-    hk_sim.simulation()
+    hk_sim.simulate()
+    hk_sim.plot_intensity()
