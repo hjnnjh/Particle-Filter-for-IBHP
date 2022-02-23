@@ -1,28 +1,10 @@
-# Particle-Filter-for-IBHP
+# IBHP
 
-- Particle Filter for IBHP(Python Realization). Paper: ***The Indian Buffet Hawkes Process to Model Evolving Latent Influences***.
+- This repository provides simulation and the parameter estimator based on Sequential Monte Carlo(SMC) for IBHP.
+- Paper: [***The Indian Buffet Hawkes Process to Model Evolving Latent Influences***](http://auai.org/uai2018/proceedings/papers/289.pdf).
 - **Pyro** realization(Accelerated by PyTorch) is coming soon.
 
-## Update Particle Weight
+## Simulation for IBHP
 
-Each particle weight updated by:
-
-<img src="./img4md/image-20211207094956358.png" alt="image-20211207094956358" style="zoom:12%;" />
-
-In which,
-
-<img src="./img4md/image-20211207095224295.png" alt="image-20211207095224295" style="zoom:12%;" />
-
-## Update Model Parameters
-
-使用MH算法更新超参数的后验分布，可以得到几个超参数的后验分布是正比于先验乘以似然。
-
-<img src="./img4md/image-20211207095335987.png" alt="image-20211207095335987" style="zoom:12%;" />
-
-t=n时，MH算法中的似然（Hawkes Likelihood）计算方法如下：
-
-<img src="./img4md/image-20211207095527745.png" alt="image-20211207095527745" style="zoom:12%;" />
-
-对应的对数似然：
-
-<img src="./img4md/image-20211207095544725.png" alt="image-20211207095544725" style="zoom:12%;" />
+- We simulate IBHP base on the algorithm proposed in [Ogata (1981)](https://ieeexplore.ieee.org/abstract/document/1056305).
+- The simulation aigorithm is in `IBHP_sim.py`.
