@@ -2,14 +2,13 @@
 # -*- encoding: utf-8 -*-
 # noinspection SpellCheckingInspection
 """
-@File    :   IBHP_sim.py
+@File    :   IBHP_simulation.py
 @Time    :   2021/11/4 11:10
 @Author  :   Jinnan Huang 
 @Contact :   jinnan_huang@stu.xjtu.edu.cn
 @Desc    :   None
 """
 import logging
-from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,7 +21,6 @@ class IBHP:
                         level=logging.INFO)
     logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
                         level=logging.WARNING)
-    logging.disable(level=logging.INFO)
     rcParams['font.family'] = 'serif'
     rcParams['font.serif'] = 'Times New Roman'
 
@@ -44,7 +42,7 @@ class IBHP:
         self.timestamp_array = None  # Timestamp for each sample
         self.kappa_n = None  # factor kernel vec
         self.gamma = None  # base kernel vec
-        self.T = None  # sample text vector
+        self.text = None  # sample text vector
         self.K = None  # Number of topics
         self.lambda0 = None  # base rate
         self.lambda_tn_array = None  # rate array
@@ -72,7 +70,6 @@ class IBHP:
         if n == 1:
             self.lambda_k_array = self.w.T @ self.beta
         elif n >= 2:
-            # kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
             delta_t_array = self.timestamp_array[-1] - self.timestamp_array
 
             base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
@@ -87,30 +84,24 @@ class IBHP:
         self.D = 20  # length of each document
         self.S = 1000  # The total number of words in the dictionary (replace with the index of each word below)
         self.K = 0
-        self.lambda0 = 5
-        self.lambda_k_array = None
+        self.lambda0 = 2
         self.tau = np.array([0.3, 0.2, 0.1])  # decaying parameters
         self.beta = np.array([1, 2, 3])  # initial parameters of base kernel
         self.w_0 = np.array([1 / 3, 1 / 3, 1 / 3])  # The weight distribution (dirichlet) parameter of the base kernel
-        self.v_0 = np.array([1 / self.S] * self.S)  # topic word distribution (dirichlet) parameter
+        self.v_0 = np.array([1] * self.S)  # topic word distribution (dirichlet) parameter
 
         # Generate the First Event
         while self.K == 0:
             self.K = np.random.poisson(self.lambda0, 1)[0]
             logging.info(f'When n=1, the number of topics is 0, and the number of topics is regenerated')
         logging.info(f'The number of topics when n=1: {self.K}')
-        # 初始化c矩阵
+        # initialize the c matrix
         self.c = np.ones((1, self.K))
-        logging.info(f'Topics appear when n=1: {self.c}')
+        logging.info(f'Topics appeared when n=1: {self.c}')
 
         # sample w_k
         self.w = np.random.dirichlet(self.w_0, self.K).T
         logging.info(f'w when n=1：{self.w}')
-
-        # calculate each base kernel
-        base_kernel = np.vectorize(partial(self.base_kernel_l, 0))  # The delta parameter of event 1 is 0
-        self.gamma = base_kernel(self.beta, self.tau)
-        logging.info(f'base kernel when n=1：{self.gamma}')
 
         # calculate factor kernel
         self.kappa_n = self.w.T @ self.beta
@@ -126,7 +117,7 @@ class IBHP:
         # sample T_1
         multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / np.count_nonzero(
             self.kappa_n)
-        self.T = np.random.multinomial(self.D, multi_dist_prob, size=1)
+        self.text = np.random.multinomial(self.D, multi_dist_prob, size=1)
 
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
@@ -186,7 +177,7 @@ class IBHP:
         multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / \
                           np.count_nonzero(self.kappa_n)
         T_n = np.random.multinomial(self.D, multi_dist_prob, size=1)
-        self.T = np.append(self.T, T_n, axis=0)  # Update the matrix that generates the text
+        self.text = np.append(self.text, T_n, axis=0)  # Update the matrix that generates the text
 
         # update lambda_k_matrix
         self.calculate_lambda_k(n)
@@ -297,7 +288,8 @@ class IBHP:
 
 if __name__ == '__main__':
     # noinspection SpellCheckingInspection
-    ibhp_ins = IBHP(n_sample=500)
+    ibhp_ins = IBHP(n_sample=200)
     ibhp_ins.generate_data()
     ibhp_ins.plot_intensity_function()
-    ibhp_ins.plot_each_factor_intensity(factor_num=12)
+    ibhp_ins.plot_each_factor_intensity(factor_num=9)
+    print(ibhp_ins.text)
