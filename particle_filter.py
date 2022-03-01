@@ -120,7 +120,7 @@ class Particle(IBHP):
 
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array)])
 
     def sample_particle_following_event_status(self, n: int):
         """
@@ -173,7 +173,7 @@ class Particle(IBHP):
         # calculate lambda_tn
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
+                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
 
     # noinspection SpellCheckingInspection
     def log_hawkes_likelihood(self, n, lambda0, beta, tau):
@@ -698,6 +698,7 @@ if __name__ == '__main__':
     pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
     pf.normalize_particle_weight()
     logging.info(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
+
     # output
     # particle weight
     # noinspection DuplicatedCode
