@@ -358,8 +358,8 @@ class Particle(IBHP):
         tau_l_candidate = sta.gamma.rvs(a=tau_l_old)
 
         # prior
-        tau_l_old_prior = sta.gamma.pdf(x=tau_l_old, a=2)
-        tau_l_candidate_prior = sta.gamma.pdf(x=tau_l_candidate, a=2)
+        tau_l_old_prior = sta.gamma.pdf(x=tau_l_old, a=1)
+        tau_l_candidate_prior = sta.gamma.pdf(x=tau_l_candidate, a=1)
 
         # likelihood
         tau_old = copy_tau(index, tau_l_old, tau)
@@ -669,7 +669,7 @@ if __name__ == '__main__':
     # n_particle = int(sys.argv[2])
 
     n_sample = 10
-    n_particle = 25
+    n_particle = 50
 
     logging.info(f'set n_sample to {n_sample}')
     logging.info(f'set n_particle to {n_particle}')
