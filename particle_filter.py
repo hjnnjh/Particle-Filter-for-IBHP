@@ -171,6 +171,7 @@ class Particle(IBHP):
             self.kappa_n = self.w.T @ self.beta * c_old
 
         # calculate lambda_tn
+        self.calculate_lambda_k(n=n)
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
                                          np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
