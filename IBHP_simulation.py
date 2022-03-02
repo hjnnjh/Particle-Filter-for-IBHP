@@ -122,7 +122,7 @@ class IBHP:
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
         assert isinstance(self.lambda_k_array, np.ndarray)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array)])
         logging.info(f'lambda tn array when n=1：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(1)
@@ -185,7 +185,7 @@ class IBHP:
         # calculate lambda(t_n)
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
+                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
         logging.info(f'lambda tn array when n={n}：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(n)
@@ -201,7 +201,7 @@ class IBHP:
             # update maximum intensity
             nonzero_index_kappa_last = np.argwhere(self.kappa_n != 0)[:, 0]  # event(n-1)
             Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.kappa_n)
-            lambda_star = self.lambda_tn_array[-1] + Y
+            lambda_star = self.lambda_tn_array[-1] + Y + self.lambda0
             while FLAG is 'notpass':
                 u = np.random.uniform(0, 1, 1)[0]
                 self.s = self.s - (1 / lambda_star) * np.log(u)
