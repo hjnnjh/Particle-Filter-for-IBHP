@@ -12,7 +12,10 @@ import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pyro
+import torch
 from matplotlib import rcParams
+import pyro.distributions as dist
 
 
 # noinspection SpellCheckingInspection,PyPep8Naming,DuplicatedCode
@@ -75,7 +78,7 @@ class IBHP:
             base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
             base_kernel_mat = base_kernel_for_delta_t_vec(delta_t_array, self.beta, self.tau).T  # t_i for each row
             kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c
-            kappa_history_count = np.count_nonzero(kappa_history, axis=1).reshape(-1, 1)
+            kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
             self.lambda_k_array = np.sum(np.divide(kappa_history, kappa_history_count), axis=0)
 
     def generate_first_event(self):
@@ -88,7 +91,7 @@ class IBHP:
         self.tau = np.array([0.3, 0.2, 0.1])  # decaying parameters
         self.beta = np.array([1, 2, 3])  # initial parameters of base kernel
         self.w_0 = np.array([1 / 3, 1 / 3, 1 / 3])  # The weight distribution (dirichlet) parameter of the base kernel
-        self.v_0 = np.array([1] * self.S)  # topic word distribution (dirichlet) parameter
+        self.v_0 = np.array([1 / self.S] * self.S)  # topic word distribution (dirichlet) parameter
 
         # Generate the First Event
         while self.K == 0:
@@ -100,7 +103,9 @@ class IBHP:
         logging.info(f'Topics appeared when n=1: {self.c}')
 
         # sample w_k
-        self.w = np.random.dirichlet(self.w_0, self.K).T
+        with pyro.plate('wk_1', self.K):
+            self.w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
+        self.w = self.w.numpy().T
         logging.info(f'w when n=1：{self.w}')
 
         # calculate factor kernel
@@ -108,7 +113,9 @@ class IBHP:
         logging.info(f'kappa_n when n=1：{self.kappa_n}')
 
         # sample v_k
-        self.v = np.random.dirichlet(self.v_0, self.K).T
+        with pyro.plate('vk_1', self.K):
+            self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
+        self.v = self.v.numpy().T
 
         # sample t_1
         self.generate_timestamp(1)
@@ -116,13 +123,13 @@ class IBHP:
 
         # sample T_1
         multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / np.count_nonzero(
-            self.kappa_n)
+            self.c[0])
         self.text = np.random.multinomial(self.D, multi_dist_prob, size=1)
 
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
         assert isinstance(self.lambda_k_array, np.ndarray)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array)])
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
         logging.info(f'lambda tn array when n=1：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(1)
@@ -152,10 +159,14 @@ class IBHP:
             self.c = np.hstack((self.c, np.zeros((self.c.shape[0], K_plus))))  # Complete the existing c matrix with 0
             self.c = np.vstack((self.c, c))  # Add the c vector of the new sample to the c matrix
 
-            new_w = np.random.dirichlet(self.w_0, K_plus).T
+            with pyro.plate(f'wk_{n}', K_plus):
+                new_w = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
+            new_w = new_w.numpy().T
             self.w = np.hstack((self.w, new_w))
 
-            new_v = np.random.dirichlet(self.v_0, K_plus).T
+            with pyro.plate(f'vk_{n}', K_plus):
+                new_v = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
+            new_v = new_v.numpy().T
             self.v = np.hstack((self.v, new_v))
 
             # update kappa vector
@@ -175,7 +186,7 @@ class IBHP:
 
         # sample T_n
         multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / \
-                          np.count_nonzero(self.kappa_n)
+                          np.count_nonzero(self.c[n - 1])
         T_n = np.random.multinomial(self.D, multi_dist_prob, size=1)
         self.text = np.append(self.text, T_n, axis=0)  # Update the matrix that generates the text
 
@@ -185,7 +196,7 @@ class IBHP:
         # calculate lambda(t_n)
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
+                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
         logging.info(f'lambda tn array when n={n}：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(n)
@@ -200,8 +211,8 @@ class IBHP:
             FLAG = 'notpass'
             # update maximum intensity
             nonzero_index_kappa_last = np.argwhere(self.kappa_n != 0)[:, 0]  # event(n-1)
-            Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.kappa_n)
-            lambda_star = self.lambda_tn_array[-1] + Y + self.lambda0
+            Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.c[n - 1])
+            lambda_star = self.lambda_tn_array[-1] + Y
             while FLAG is 'notpass':
                 u = np.random.uniform(0, 1, 1)[0]
                 self.s = self.s - (1 / lambda_star) * np.log(u)
@@ -214,9 +225,8 @@ class IBHP:
                 base_kernel_mat = base_kernel_for_delta_s_vec(delta_s, self.beta, self.tau).T
                 kappa_s = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[: delta_s.shape[0]]
                 kappa_s_nonzero_index = np.argwhere(kappa_s[-1] != 0)[:, 0]
-                kappa_s_count = np.count_nonzero(kappa_s, axis=1).reshape(-1, 1)
-                kappa_s_count = np.where(kappa_s_count == 0, kappa_s_count, 1)  # Make sure the denominator is not 0
-                lambda_s_array = np.sum(np.divide(kappa_s, kappa_s_count), axis=0)
+                kappa_s_count = np.count_nonzero(self.c[: delta_s.shape[0]], axis=1).reshape(-1, 1)
+                lambda_s_array = np.sum(kappa_s / kappa_s_count, axis=0)
                 lambda_s = np.sum(lambda_s_array[kappa_s_nonzero_index]) + self.lambda0
 
                 d = np.random.uniform(0, 1, 1)[0]
@@ -236,7 +246,7 @@ class IBHP:
         x = np.arange(self.lambda_tn_array.shape[0])
         ax.plot(x, self.lambda_tn_array)
         ax.set_xlabel('n')
-        ax.set_ylabel('$\lambda(t_n)$')
+        ax.set_ylabel(r'$\lambda(t_n)$')
         plt.show()
 
     def collect_factor_intensity(self, n):
@@ -280,7 +290,7 @@ class IBHP:
             x = np.arange(lambda_k_column.shape[0])
             ax[idx].plot(x, lambda_k_column, color='b')
             ax[idx].set_xlabel('n')
-            ax[idx].set_ylabel(f'$\lambda_{{{col + 1}}}(t)$')
+            ax[idx].set_ylabel(fr'$\lambda_{col + 1}(t)$')
             ax[idx].set_title(f'Topic {col + 1}')
         fig.tight_layout()
         plt.show()

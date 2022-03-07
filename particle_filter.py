@@ -15,8 +15,12 @@ from functools import partial
 from multiprocessing import Pool, cpu_count
 from typing import List, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pyro
+import pyro.distributions as dist
 import scipy.stats as sta
+import torch
 from tqdm import tqdm
 
 from IBHP_simulation import IBHP
@@ -85,7 +89,7 @@ class Particle(IBHP):
             base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
             base_kernel_mat = base_kernel_for_delta_t_vec(delta_t_array, self.beta, self.tau).T  # t_i for each row
             kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c
-            kappa_history_count = np.count_nonzero(kappa_history, axis=1).reshape(-1, 1)
+            kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
             self.lambda_k_array = np.sum(np.divide(kappa_history, kappa_history_count), axis=0)
 
     def sample_first_particle_event_status(self):
@@ -99,7 +103,7 @@ class Particle(IBHP):
         self.tau = np.array([0.2, 0.2, 0.2])  # array, shape=(L, )
 
         self.w_0 = np.array([1 / self.L] * self.L)  # array, shape=(L, )
-        self.v_0 = np.array([1] * self.S)  # array, shape(S, )
+        self.v_0 = np.array([1 / self.S] * self.S)  # array, shape(S, )
 
         # Generate K
         self.K = np.random.poisson(self.lambda0, 1)[0]  # K: int
@@ -110,9 +114,13 @@ class Particle(IBHP):
         # Generate the topic occurrence matrix c, set all c_k=1
         self.c = np.ones((1, self.K))  # matrix, shape=(1, self.K)
         # Generate w
-        self.w = np.random.dirichlet(self.w_0, self.K).T  # matrix, shape=(L, K), each column is the weight of each k
+        with pyro.plate('wk_1', self.K):
+            self.w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
+        self.w = self.w.numpy().T  # matrix, shape=(L, K), each column is the weight of each k
         # Generate v
-        self.v = np.random.dirichlet(self.v_0, self.K).T  # matrix, shape=(S, K), Each column is a distribution of
+        with pyro.plate('vk_1', self.K):
+            self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
+        self.v = self.v.numpy().T  # matrix, shape=(S, K), Each column is a distribution of
         # words for each k
 
         # calculate kappa_n
@@ -120,7 +128,7 @@ class Particle(IBHP):
 
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array)])
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
 
     def sample_particle_following_event_status(self, n: int):
         """
@@ -155,11 +163,15 @@ class Particle(IBHP):
             self.c = np.vstack((self.c, c))  # Add the new c vector to the c matrix
 
             # If K+ is greater than 0, generate a new w_k, update self.w
-            w_new = np.random.dirichlet(self.w_0, k_plus).T
+            with pyro.plate(f'wk_{n}', k_plus):
+                w_new = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
+            w_new = w_new.numpy().T
             self.w = np.hstack((self.w, w_new))
 
             # If K+ is greater than 0, generate a new v_k, update self.v
-            v_new = np.random.dirichlet(self.v_0, k_plus).T
+            with pyro.plate(f'vk_{n}', k_plus):
+                v_new = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
+            v_new = v_new.numpy().T
             self.v = np.hstack((self.v, v_new))
 
             # If K+ is greater than 0, calculate a new kappa_n
@@ -174,7 +186,7 @@ class Particle(IBHP):
         self.calculate_lambda_k(n=n)
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
+                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
 
     # noinspection SpellCheckingInspection
     def log_hawkes_likelihood(self, n, lambda0, beta, tau):
@@ -187,39 +199,33 @@ class Particle(IBHP):
         :return:
         """
         delta_T_array = self.timestamp_array[-1] - self.timestamp_array[: n]  # used to calculate the integral term
-        delta_tn_array = self.timestamp_array[n - 1] - self.timestamp_array[: n]  # for calculating kappa i
 
         # ---------------------- first term ----------------------
         # calculate kappa history
-        base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
-        base_kernel_mat = base_kernel_for_delta_t_vec(delta_tn_array, beta, tau).T
-        kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c
-        kappa_history_count = np.count_nonzero(kappa_history, axis=1).reshape(-1, 1)
-        kappa_history_count[kappa_history_count == 0] = 1  # Make sure the denominator is not 0
+        kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
 
         # calculate exp_term in integral term
         delta_t_divide_tau = np.vectorize(np.divide, signature='(),(l)->(l)')
-        exp_term = 1 - np.exp(- delta_t_divide_tau(delta_T_array, tau))  # (t, l)
+        exp_term = 1 - np.exp(- delta_t_divide_tau(delta_T_array, tau))  # (T, L)
 
-        # calculate exp_term_coefficient
-        exp_term_coefficient_nominator = np.einsum('lk,l->lk', self.w, beta * tau)
-        exp_times_coef_term = np.einsum('lk,tl->tk', exp_term_coefficient_nominator, exp_term) * self.c
+        multyply_func = np.vectorize(np.multiply)
+        beta_tau_exp_term = multyply_func(self.beta * self.tau, exp_term)
+        exp_times_coef_term = np.einsum('lk,tl->tk', self.w, beta_tau_exp_term) * self.c
         exp_times_coef_term = exp_times_coef_term / kappa_history_count
-        kappa_n_nonzero_index = np.argwhere(kappa_history[-1] != 0)[:, 0]
-
-        # log integral term
+        kappa_n_nonzero_index = np.argwhere(self.c[-1] != 0)[:, 0]
         integral_term = np.sum(exp_times_coef_term[:, kappa_n_nonzero_index])
-        log_integral_term = - (lambda0 * self.timestamp_array[-1] + integral_term)
+        # log integral term
+        log_integral_term = -(lambda0 * self.timestamp_array[-1] + integral_term)
 
         # ---------------------- second term ----------------------
         log_prod_term = 0
+        base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
         for j in np.arange(1, n + 1):
             delta_tj_array = self.timestamp_array[j - 1] - self.timestamp_array[: j]
             tj_kernel_mat = base_kernel_for_delta_t_vec(delta_tj_array, beta, tau).T
             kappa_history_j = np.einsum('lk,tl->tk', self.w, tj_kernel_mat) * self.c[: j]
-            kappa_history_j_count = np.count_nonzero(kappa_history_j, axis=1).reshape(-1, 1)
-            kappa_history_j_count[kappa_history_j_count == 0] = 1  # Make sure the denominator is not 0
-            kappa_j_nonzero_index = np.argwhere(kappa_history_j[-1] != 0)[:, 0]
+            kappa_history_j_count = np.count_nonzero(self.c[: j], axis=1).reshape(-1, 1)
+            kappa_j_nonzero_index = np.argwhere(self.c[j - 1] != 0)[:, 0]
             lambda_tj = np.sum(np.divide(kappa_history_j, kappa_history_j_count)[:, kappa_j_nonzero_index])
             log_prod_term += np.log(lambda0 + lambda_tj)
 
@@ -384,7 +390,7 @@ class Particle(IBHP):
         else:
             return tau_l_old
 
-    def mh_update(self, n, n_iter=100000):
+    def mh_update(self, n, n_iter=5000):
         """
         update parameters
         :param n: The current sample order, which must be greater than or equal to 1
@@ -428,11 +434,22 @@ class Particle(IBHP):
                                                     old_tau_l=updated_tau_l)
                     updated_tau_list[idx].append(updated_tau_l)
                     tau[idx] = updated_tau_l
-        keep_num = -5000
+        # choose the group of the parameters which makes the log hawkes likelihood greatest
+        burning = int(n_iter - n_iter / 10)
+        # hawkes_func = np.vectorize(partial(self.log_hawkes_likelihood, n), signature='(),(n),(n)->()')
+        # candidate_log_likelihood_array = hawkes_func(updated_lambda0_array[burning:],
+        #                                              np.array(updated_beta_list).T[burning:],
+        #                                              np.array(updated_tau_list).T[burning:])
+        # greatest_likelihood_index = np.argsort(candidate_log_likelihood_array)[-1]
+
         # update particle parameters
-        self.lambda0 = np.average(updated_lambda0_array[keep_num:])
-        self.beta = np.average(np.array(updated_beta_list)[:, keep_num:], axis=1)
-        self.tau = np.average(np.array(updated_tau_list)[:, keep_num:], axis=1)
+        self.lambda0 = np.average(updated_lambda0_array[burning:])
+        self.beta = np.average(np.array(updated_beta_list).T[burning:], axis=0)
+        self.tau = np.average(np.array(updated_tau_list).T[burning:], axis=0)
+
+        print(f'[event {n}] updated lambda0: {self.lambda0}')
+        print(f'[event {n}] updated beta: {self.beta}')
+        print(f'[event {n}] updated tau: {self.tau}')
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
     # def update_all_hyperparameters(self, shape_lambda0, scale_lambda0, shape_beta, scale_beta,
@@ -502,45 +519,30 @@ class Particle(IBHP):
         if n == 1:
             lambda_prime = self.lambda0 * self.timestamp_array[n - 1]
         else:
-            lambda_prime = self.lambda0 * (self.timestamp_array[n - 1] - self.timestamp_array[n - 2])
-            # delta_tn_array = self.timestamp_array[n - 1] - self.timestamp_array[: n - 1]
-            # delta_tn_minus_1_array = self.timestamp_array[n - 2] - self.timestamp_array[: n - 1]
-            #
-            # # calculate kappa history
-            # base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
-            # base_kernel_mat = base_kernel_for_delta_t_vec(delta_tn_array, self.beta, self.tau).T
-            # kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[: n - 1]
-            # kappa_history_count = np.count_nonzero(kappa_history, axis=1).reshape(-1, 1)
-            # kappa_n_minus_1_nonzero_index = np.argwhere(kappa_history[-1] != 0)[:, 0]
-            #
-            # # calculate sharing coefficient
-            # exp_term_coefficient_nominator = np.einsum('lk,l->lk', self.w, self.beta * self.tau)
-            #
-            # # calculate first exp term: tn-ti
-            # delta_t_divide_tau = np.vectorize(np.divide, signature='(),(l)->(l)')
-            # exp_term_tn = np.exp(delta_t_divide_tau(delta_tn_array, self.tau))
-            # exp_times_coef_term_tn = np.einsum('lk,tl->tk', exp_term_coefficient_nominator, exp_term_tn) * self.c[
-            #                                                                                                : n - 1]
-            # exp_times_coef_term_tn = exp_times_coef_term_tn / kappa_history_count
-            # first_term = np.sum(exp_times_coef_term_tn[:, kappa_n_minus_1_nonzero_index])
-            #
-            # # calculate second exp term: t_n-1 - ti
-            # exp_term_tn_1 = np.exp((delta_t_divide_tau(delta_tn_minus_1_array, self.tau)))
-            # exp_times_coef_term_tn_minus_1 = np.einsum('lk,tl->tk', exp_term_coefficient_nominator,
-            #                                            exp_term_tn_1) * self.c[
-            #                                                             : n - 1]
-            # exp_times_coef_term_tn_minus_1 = exp_times_coef_term_tn_minus_1 / kappa_history_count
-            # second_term = np.sum(exp_times_coef_term_tn_minus_1[:, kappa_n_minus_1_nonzero_index])
-            #
-            # # calculate lambda_prime
-            # lambda_prime = self.lambda0 * (self.timestamp_array[n - 1] - self.timestamp_array[n - 2]) - \
-            #                (first_term - second_term)
+            delta_tn_array = self.timestamp_array[n - 1] - self.timestamp_array[: n - 1]
+            delta_tn_minus_1_array = self.timestamp_array[n - 2] - self.timestamp_array[: n - 1]
+
+            # calculate denominator
+            kappa_history_count = np.count_nonzero(self.c[: n - 1], axis=1).reshape(-1, 1)
+            kappa_n_minus_1_nonzero_index = np.argwhere(self.c[n - 2] != 0)[:, 0]
+
+            # exp term
+            dev_func = np.vectorize(np.divide, signature='(),(l)->(l)')
+            exp_term = np.exp(-dev_func(delta_tn_minus_1_array, self.tau)) - np.exp(-dev_func(delta_tn_array, self.tau))
+            multiply_func = np.vectorize(np.multiply)
+            beta_tau_exp_term = multiply_func(self.beta * self.tau, exp_term)  # (T, L)
+            nominator = np.einsum('lk,tl->tk', self.w, beta_tau_exp_term) * self.c[: n - 1]  # (T, K)
+            fraction = nominator / kappa_history_count
+            exp_term_res = np.sum(fraction[:, kappa_n_minus_1_nonzero_index])
+            lambda_prime = self.lambda0 * (self.timestamp_array[n - 1] - self.timestamp_array[n - 2]) + exp_term_res
+
         # calculate log likelihood for timestamp
+        print(f'[event {n}] lambda_prime: {lambda_prime}')
         log_likelihood_timestamp = np.log(lambda_prime) - lambda_prime
 
         # log likelihood for text
-        kappa_n_minus_1_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
-        vn_avg = np.einsum('ij->i', self.v[:, kappa_n_minus_1_nonzero_index]) / np.count_nonzero(self.kappa_n)
+        kappa_n_minus_1_nonzero_index = np.argwhere(self.c[n - 1] != 0)[:, 0]
+        vn_avg = np.einsum('ij->i', self.v[:, kappa_n_minus_1_nonzero_index]) / np.count_nonzero(self.c[n - 1])
         Tn = transfer_multi_dist_result_to_vec(self.T_array)[n - 1]  # shape=(S, )
         count_dict = Counter(Tn)
         log_likelihood_text = 0
@@ -551,7 +553,7 @@ class Particle(IBHP):
 
 
 # noinspection PyPep8Naming,SpellCheckingInspection,PyShadowingNames
-class Particle_Filter:
+class Filtering:
     """
     This class controls weight updating, normalization, and resampling of all particles (in parallel)
     """
@@ -583,6 +585,15 @@ class Particle_Filter:
 
     def get_partcie_weight_arr(self):
         return self.particle_weight_arr
+
+    def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
+        """
+        Update particle weight list
+        :param particle_index_list:
+        :return:
+        """
+        for idx, particle in particle_index_list:
+            self.particle_weight_arr[idx] = particle.log_particle_weight
 
     def normalize_particle_weight(self):
         """
@@ -652,25 +663,78 @@ class Particle_Filter:
         particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=n)
         return particle_idx, particle
 
-    def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
-        """
-        Update particle weight list
-        :param particle_index_list:
-        :return:
-        """
-        for idx, particle in particle_index_list:
-            self.particle_weight_arr[idx] = particle.log_particle_weight
+
+# ---------------------- plot func ----------------------
+
+# noinspection PyShadowingNames
+def plot_particle_intensity(true_intensity_array: np.ndarray, particle_index_pair_list: List[Tuple[int, Particle]]):
+    particle_num = len(particle_index_pair_list)
+    if not particle_num % 2:
+        fig, ax = plt.subplots(particle_num // 2, 2, dpi=400)
+    else:
+        fig, ax = plt.subplots(particle_num // 2 + 1, 2, dpi=400)
+        for i in range(1, (2 - particle_num % 2) + 1):
+            fig.delaxes(ax[particle_num // 2, i])
+    ax = ax.flatten()
+
+    x_true = np.arange(1, true_intensity_array.shape[0] + 1)
+    for i, (idx, particle) in enumerate(particle_index_pair_list):
+        pred_intensity_array = particle.lambda_tn_array
+        x_pred = np.arange(1, pred_intensity_array.shape[0] + 1)
+        ax[i].plot(x_true, true_intensity_array, color='r', label='True')
+        ax[i].plot(x_pred, pred_intensity_array, color='b', label='Pred')
+        ax[i].legend()
+        ax[i].set_title(f'Particle {idx} Intensity')
+        ax[i].set_xlabel('n')
+        ax[i].set_ylabel(r'$\lambda(t)}$')
+    fig.tight_layout()
+    plt.show()
+
+
+def plot_mh_samples(sample_array: np.ndarray, title: str):
+    fig, ax = plt.subplots(dpi=400)
+    x = np.arange(sample_array.shape[0])
+    ax.plot(x, sample_array, color='b')
+    ax.set_title(f'{title}')
+    ax.set_xlabel('sample_num')
+    plt.show()
+
+
+# noinspection PyShadowingNames
+def plot_parameters(true_lambda_0, true_beta: np.ndarray, true_tau: np.ndarray, pred_lambda_0: np.ndarray,
+                    pred_beta: np.ndarray,
+                    pred_tau: np.ndarray, n_sample: int, kernel_num=3):
+    fig, ax = plt.subplots(3, kernel_num, dpi=400)
+    ax = ax.flatten()
+    fig.delaxes(ax[-1])
+    fig.delaxes(ax[-2])
+    # plot lambda 0
+    x_true = np.arange(1, n_sample + 1)
+    true_lambda_0_array = np.array([true_lambda_0] * n_sample)
+    x_pred_lambda0 = np.arange(1, pred_lambda_0.shape[0] + 1)
+    ax[2 * kernel_num].plot(x_true, true_lambda_0_array, color='r', label='True')
+    ax[2 * kernel_num].plot(x_pred_lambda0, pred_lambda_0, color='b', label='Pred')
+    ax[2 * kernel_num].set_title(r'$\lambda_0$')
+    ax[2 * kernel_num].legend()
+    for l in np.arange(kernel_num):
+        ax[l].plot(x_true, np.array([true_beta[l]] * n_sample), color='r', label='True')
+        x_pred_beta = np.arange(1, pred_beta.shape[0] + 1)
+        ax[l].plot(x_pred_beta, pred_beta[:, l], color='b', label='Pred')
+        ax[l].set_title(fr'$\beta_{l + 1}$')
+        ax[l].legend()
+        ax[l + kernel_num].plot(x_true, np.array([true_tau[l]] * n_sample), color='r', label='True')
+        x_pred_tau = np.arange(1, pred_tau.shape[0] + 1)
+        ax[l + kernel_num].plot(x_pred_tau, pred_tau[:, l], color='b', label='Pred')
+        ax[l + kernel_num].set_title(fr'$\tau_{l + 1}$')
+        ax[l + kernel_num].legend()
+    fig.tight_layout()
+    plt.show()
 
 
 # noinspection SpellCheckingInspection
 if __name__ == '__main__':
-    # Generate test data
-    # parameters
-    # n_sample = int(sys.argv[1])
-    # n_particle = int(sys.argv[2])
-
-    n_sample = 10
-    n_particle = 50
+    n_sample = 50
+    n_particle = 20
 
     logging.info(f'set n_sample to {n_sample}')
     logging.info(f'set n_particle to {n_particle}')
@@ -678,6 +742,7 @@ if __name__ == '__main__':
     # noinspection SpellCheckingInspection
     ibhp = IBHP(n_sample)
     ibhp.generate_data()
+    true_intensity_array = ibhp.lambda_tn_array
     logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
     logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
     logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
@@ -687,8 +752,8 @@ if __name__ == '__main__':
     # filtering
     # noinspection PyBroadException,SpellCheckingInspection
     logging.info(f'\n{"-" * 40}  Start particle filter parameter estimation {"-" * 40}\n')
-    pf = Particle_Filter(timestamp_array=ibhp.timestamp_array, T_array=ibhp.text, n_particle=n_particle,
-                         word_dict=word_dict, L=3)
+    pf = Filtering(timestamp_array=ibhp.timestamp_array, T_array=ibhp.text, n_particle=n_particle,
+                   word_dict=word_dict, L=3)
     particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
     # event 1 status
     pool_event_1 = Pool(cpu_count())
@@ -700,20 +765,34 @@ if __name__ == '__main__':
     pf.normalize_particle_weight()
     logging.info(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
 
-    # output
-    # particle weight
+    # ------------------------------- output -------------------------------
+    top_n = 6  # number of particles which need to plot
+    descend_weight_index_arr = np.argsort(
+        - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
     # noinspection DuplicatedCode
-    p_weight_arr = pf.get_partcie_weight_arr()
-    logging.info(f'weight of all particles: {p_weight_arr}\n')
+    p_weight_arr = pf.get_partcie_weight_arr()[descend_weight_index_arr]
 
-    # Hyperparameters weighted average
-    lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
+    # Hyperparameters weighted average, use the best top_n particle
+    # noinspection DuplicatedCode
+    lam_0_arr = np.array(
+        [particle.lambda0 for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
     lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-    beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
+    beta_arr = np.array(
+        [particle.beta.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
     beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
-    tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
+    tau_arr = np.array(
+        [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
     tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-    logging.info(f'weighted average of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+    logging.info(
+        f'Top {top_n} average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+
+    pred_lambda0_array = np.array([lam_0])
+    pred_beta_array = beta.reshape(1, -1)
+    pred_tau_array = tau.reshape(1, -1)
+
+    plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
+                    pred_tau=pred_tau_array,
+                    pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
     N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
     if N_eff < 2 / 3 * pf.get_particle_num():
@@ -732,22 +811,41 @@ if __name__ == '__main__':
         pool_event_n.join()
         pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
         pf.normalize_particle_weight()
-
-        # output
         logging.info(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
+
+        # ------------------------------- output -------------------------------
+        # plot pred intensity
+        top_n = 6  # number of particles which need to plot
+        descend_weight_index_arr = np.argsort(
+            - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
+        plot_particle_intensity(true_intensity_array=true_intensity_array,
+                                particle_index_pair_list=[(idx, particle) for idx, particle in particle_index_pair_list
+                                                          if idx in descend_weight_index_arr])
         # particle weight
         # noinspection DuplicatedCode
-        p_weight_arr = pf.get_partcie_weight_arr()
-        logging.info(f'weight of all particles: {p_weight_arr}\n')
+        p_weight_arr = pf.get_partcie_weight_arr()[descend_weight_index_arr]
 
         # Hyperparameters weighted average
-        lam_0_arr = np.array([particle.lambda0 for idx, particle in particle_index_pair_list])
+        # noinspection DuplicatedCode
+        lam_0_arr = np.array(
+            [particle.lambda0 for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
         lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-        beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
+        beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list if
+                             idx in descend_weight_index_arr])
         beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
-        tau_arr = np.array([particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
+        tau_arr = np.array(
+            [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
         tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
-        logging.info(f'weighted average of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+        logging.info(
+            f'Top {top_n} average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+
+        pred_lambda0_array = np.append(pred_lambda0_array, lam_0)
+        pred_beta_array = np.vstack((pred_beta_array, beta))
+        pred_tau_array = np.vstack((pred_tau_array, tau))
+
+        plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
+                        pred_tau=pred_tau_array,
+                        pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
         if n == n_sample:
             break
