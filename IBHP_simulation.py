@@ -211,7 +211,8 @@ class IBHP:
             FLAG = 'notpass'
             # update maximum intensity
             nonzero_index_kappa_last = np.argwhere(self.kappa_n != 0)[:, 0]  # event(n-1)
-            Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.c[n - 1])
+            # Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.c[n - 1])
+            Y = np.sum(self.w.T @ self.beta) / np.count_nonzero(self.c[n - 1])
             lambda_star = self.lambda_tn_array[-1] + Y
             while FLAG is 'notpass':
                 u = np.random.uniform(0, 1, 1)[0]
@@ -224,10 +225,10 @@ class IBHP:
                 base_kernel_for_delta_s_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
                 base_kernel_mat = base_kernel_for_delta_s_vec(delta_s, self.beta, self.tau).T
                 kappa_s = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[: delta_s.shape[0]]
-                kappa_s_nonzero_index = np.argwhere(kappa_s[-1] != 0)[:, 0]
+                # kappa_s_nonzero_index = np.argwhere(kappa_s[-1] != 0)[:, 0]
                 kappa_s_count = np.count_nonzero(self.c[: delta_s.shape[0]], axis=1).reshape(-1, 1)
                 lambda_s_array = np.sum(kappa_s / kappa_s_count, axis=0)
-                lambda_s = np.sum(lambda_s_array[kappa_s_nonzero_index]) + self.lambda0
+                lambda_s = np.sum(lambda_s_array) + self.lambda0
 
                 d = np.random.uniform(0, 1, 1)[0]
                 if d <= lambda_s / lambda_star:

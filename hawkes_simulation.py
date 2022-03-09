@@ -126,7 +126,7 @@ class HawkesSimulation:
 
     def plot_intensity(self):
         fig, ax = plt.subplots(figsize=(15, 10), dpi=400)
-        t_array = np.linspace(0, 30, 30000)
+        t_array = np.linspace(0, 30, 3000000)
         intensity_function_map = np.vectorize(partial(self.intensity_function, self.lambda0, self.Y,
                                                       self.generated_timestamp_array, self.delta))
         lambda_array = intensity_function_map(t_array)
