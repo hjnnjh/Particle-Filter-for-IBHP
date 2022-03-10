@@ -12,6 +12,7 @@ import logging
 import os.path
 from collections import Counter
 from functools import partial
+from itertools import product
 from multiprocessing import Pool, cpu_count
 from typing import List, Tuple
 
@@ -20,6 +21,7 @@ import numpy as np
 import pyro
 import pyro.distributions as dist
 import scipy.stats as sta
+import scipy.special as spe
 import torch
 
 from IBHP_simulation import IBHP
@@ -199,7 +201,7 @@ class Particle(IBHP):
         """
         delta_T_array = self.timestamp_array[-1] - self.timestamp_array[: n]  # used to calculate the integral term
 
-        # ---------------------- first term ----------------------
+        # ---------------------- intergal term ----------------------
         # calculate kappa history
         kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
 
@@ -216,7 +218,7 @@ class Particle(IBHP):
         # log integral term
         log_integral_term = -(lambda0 * self.timestamp_array[-1] + integral_term)
 
-        # ---------------------- second term ----------------------
+        # ---------------------- product term ----------------------
         log_prod_term = 0
         base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
         for j in np.arange(1, n + 1):
@@ -461,27 +463,34 @@ class Particle(IBHP):
     #     print(f'[event {n}] updated tau: {self.tau}')
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameters(self, n, N: int = 10000):
+    def update_hyperparameters(self, n, N: int = 50, method: str = 'maximum'):
         """
         update lambda0, beta, tau
-        :param N: sample numbers
+        :param method: 'maximum' or 'average', if 'maximum' received, choose the sample that makes the
+        likelihood greatest.
+        :param N: sample numbers for beta and tau
+        (sample number of lambda0 is the shape of product matrix of beta or tau)
         :param n: event number
         :return:
         """
-        # draw candidate lambda0 from prior
-        lambda0_candi_arr = sta.gamma.rvs(a=3, size=N)
-        # calculate prior for candidate lambda0
-        lambda0_p_prior_arr = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=3), lambda0_candi_arr)))
-
         # draw candidate beta
         beta_candi_mat = sta.gamma.rvs(a=3, size=(N, self.L))
+        # calculate Cartesian product of beta arrays
+        beta_candi_mat = np.array(list(product(*beta_candi_mat.tolist()))).T
         # calculate prior for candidate beta
         beta_p_prior_mat = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=3), beta_candi_mat)))
 
         # draw candidate tau
         tau_candi_mat = sta.gamma.rvs(a=1, size=(N, self.L))
+        # calculate Cartesian product of beta arrays
+        tau_candi_mat = np.array(list(product(*tau_candi_mat.tolist()))).T  # (L, N)
         # calculate prior for candidate tau
         tau_p_prior_mat = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=1), beta_candi_mat)))
+
+        # draw candidate lambda0 from prior
+        lambda0_candi_arr = sta.gamma.rvs(a=3, size=beta_candi_mat.shape[1])
+        # calculate prior for candidate lambda0
+        lambda0_p_prior_arr = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=3), lambda0_candi_arr)))
 
         # calculate log-likelihood
         log_hawkes_likelihood_func = np.vectorize(partial(self.log_hawkes_likelihood, n), signature='(),(n),(n)->()')
@@ -492,15 +501,24 @@ class Particle(IBHP):
         # log_hawkes_likelihood_arr = log_hawkes_likelihood_arr / np.sum(log_hawkes_likelihood_arr)
 
         # calculate sample weight
-        weight_arr = np.exp(log_hawkes_likelihood_arr) * lambda0_p_prior_arr * np.prod(beta_p_prior_mat, axis=1) * \
-                     np.prod(tau_p_prior_mat, axis=1)
-        # normalize weight
-        weight_arr = weight_arr / np.sum(weight_arr)
+        log_weight_arr = np.log(lambda0_p_prior_arr) + np.sum(np.log(beta_p_prior_mat), axis=0) + np.sum(
+            np.log(tau_p_prior_mat), axis=0) + log_hawkes_likelihood_arr
+        # normalize weight using softmax func
+        weight_arr = spe.softmax(log_weight_arr)
 
-        # new hyperparameters
-        self.lambda0 = weight_arr @ lambda0_candi_arr
-        self.beta = weight_arr @ beta_candi_mat
-        self.tau = weight_arr @ tau_candi_mat
+        # new hyperparameters, maximum likelihood sample
+        if method is 'maximum':
+            best_sample_index = np.argmax(log_hawkes_likelihood_arr)
+            self.lambda0 = lambda0_candi_arr[best_sample_index]
+            self.beta = beta_candi_mat[:, best_sample_index]
+            self.tau = tau_candi_mat[:, best_sample_index]
+        elif method is 'average':
+            # new hyperparameters, weighted average
+            self.lambda0 = weight_arr @ lambda0_candi_arr
+            self.beta = weight_arr @ beta_candi_mat
+            self.tau = weight_arr @ tau_candi_mat
+        else:
+            raise ValueError('Parameter `method` got an unexpected value')
 
         print(
             f'log hawkes likelihood using updated parameters: {self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta, tau=self.tau)}')
@@ -667,41 +685,42 @@ class Filtering:
 
 # noinspection PyShadowingNames
 def plot_particle_intensity(true_intensity_array: np.ndarray, particle_index_pair_list: List[Tuple[int, Particle]],
-                            particle_weight_arr: np.ndarray):
-    # particle_num = len(particle_index_pair_list)
-    fig, ax = plt.subplots(dpi=400)
-    pred_intensity_array = np.array([particle.lambda_tn_array for idx, particle in particle_index_pair_list])
-    weight_array = np.array([particle_weight_arr[idx] for idx, particle in particle_index_pair_list])
-    avg_pred_intensity_array = np.average(pred_intensity_array, weights=weight_array, axis=0)
-    x_pred = np.arange(1, avg_pred_intensity_array.shape[0] + 1)
-    x_true = np.arange(1, true_intensity_array.shape[0] + 1)
-    ax.plot(x_true, true_intensity_array, color='r')
-    ax.plot(x_pred, avg_pred_intensity_array, color='b')
-    ax.set_title('Predicted Intensity')
-    ax.set_xlabel('n')
-    ax.set_ylabel(r'$\lambda(t)}$')
-    fig.tight_layout()
-    # if not particle_num % rows:
-    #     fig, ax = plt.subplots(rows, particle_num // rows, dpi=400)
-    # else:
-    #     fig, ax = plt.subplots(rows, particle_num // rows + 1, dpi=400)
-    #     for i in range(1, (rows - particle_num % rows) + 1):
-    #         fig.delaxes(ax[i, particle_num // rows])
-    # ax = ax.flatten()
-    #
+                            rows=5):
+    # fig, ax = plt.subplots(dpi=400)
+    # pred_intensity_array = np.array([particle.lambda_tn_array for idx, particle in particle_index_pair_list])
+    # weight_array = np.array([particle_weight_arr[idx] for idx, particle in particle_index_pair_list])
+    # avg_pred_intensity_array = np.average(pred_intensity_array, weights=weight_array, axis=0)
+    # x_pred = np.arange(1, avg_pred_intensity_array.shape[0] + 1)
     # x_true = np.arange(1, true_intensity_array.shape[0] + 1)
-    # for i, (idx, particle) in enumerate(particle_index_pair_list):
-    #     pred_intensity_array = particle.lambda_tn_array
-    #     x_pred = np.arange(1, pred_intensity_array.shape[0] + 1)
-    #     ax[i].plot(x_true, true_intensity_array, color='r', label='True')
-    #     ax[i].plot(x_pred, pred_intensity_array, color='b', label='Pred')
-    #     # ax[i].legend()
-    #     ax[i].set_title(f'Particle {idx} Intensity')
-    #     ax[i].set_xlabel('n')
-    #     ax[i].set_ylabel(r'$\lambda(t)}$')
+    # ax.plot(x_true, true_intensity_array, color='r')
+    # ax.plot(x_pred, avg_pred_intensity_array, color='b')
+    # ax.set_title('Predicted Intensity')
+    # ax.set_xlabel('n')
+    # ax.set_ylabel(r'$\lambda(t)}$')
     # fig.tight_layout()
-    fig.savefig('./img/pred_intensity.png')
-    # plt.show()
+
+    particle_num = len(particle_index_pair_list)
+    if not particle_num % rows:
+        fig, ax = plt.subplots(rows, particle_num // rows, dpi=400)
+    else:
+        fig, ax = plt.subplots(rows, particle_num // rows + 1, dpi=400)
+        for i in range(1, (rows - particle_num % rows) + 1):
+            fig.delaxes(ax[i, particle_num // rows])
+    ax = ax.flatten()
+
+    x_true = np.arange(1, true_intensity_array.shape[0] + 1)
+    for i, (idx, particle) in enumerate(particle_index_pair_list):
+        pred_intensity_array = particle.lambda_tn_array
+        x_pred = np.arange(1, pred_intensity_array.shape[0] + 1)
+        ax[i].plot(x_true, true_intensity_array, color='r', label='True')
+        ax[i].plot(x_pred, pred_intensity_array, color='b', label='Pred')
+        # ax[i].legend()
+        ax[i].set_title(f'Particle {idx} Intensity')
+        ax[i].set_xlabel('n')
+        ax[i].set_ylabel(r'$\lambda(t)}$')
+    fig.tight_layout()
+    plt.show()
+    # fig.savefig('./img/pred_intensity.png')
 
 
 def plot_mh_samples(sample_array: np.ndarray, title: str):
@@ -741,17 +760,21 @@ def plot_parameters(true_lambda_0, true_beta: np.ndarray, true_tau: np.ndarray, 
         ax[l + kernel_num].set_title(fr'$\tau_{l + 1}$')
         # ax[l + kernel_num].legend()
     fig.tight_layout()
-    fig.savefig('./img/parameters.png')
-    # plt.show()
+    # fig.savefig('./img/parameters.png')
+    plt.show()
 
 
 # noinspection SpellCheckingInspection
 if __name__ == '__main__':
-    n_sample = 500
-    n_particle = 50
+    n_sample = 100
+    n_particle = 10
 
     if not os.path.exists('./img'):
         os.mkdir('./img')
+
+    # save the model result
+    if not os.path.exists('./model-result'):
+        os.mkdir('./model-result')
 
     logging.info(f'set n_sample to {n_sample}')
     logging.info(f'set n_particle to {n_particle}')
@@ -783,25 +806,25 @@ if __name__ == '__main__':
     logging.info(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
 
     # ------------------------------- output -------------------------------
-    top_n = 5  # number of particles which need to plot
+    top_n = 3  # number of particles which need to plot
     descend_weight_index_arr = np.argsort(
         - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
     # noinspection DuplicatedCode
-    p_weight_arr = pf.get_partcie_weight_arr()[descend_weight_index_arr]
+    p_weight_arr = pf.get_partcie_weight_arr()
 
     # Hyperparameters weighted average, use the best top_n particle
     # noinspection DuplicatedCode
     lam_0_arr = np.array(
-        [particle.lambda0 for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
+        [particle.lambda0 for idx, particle in particle_index_pair_list])
     lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
     beta_arr = np.array(
-        [particle.beta.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
+        [particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
     beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
     tau_arr = np.array(
-        [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
+        [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
     tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
     logging.info(
-        f'Top {top_n} average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+        f'Average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
 
     pred_lambda0_array = np.array([lam_0])
     pred_beta_array = beta.reshape(1, -1)
@@ -837,24 +860,23 @@ if __name__ == '__main__':
         plot_particle_intensity(true_intensity_array=true_intensity_array,
                                 particle_index_pair_list=[(idx, particle) for idx, particle in particle_index_pair_list
                                                           if idx in descend_weight_index_arr],
-                                particle_weight_arr=pf.get_partcie_weight_arr())
+                                rows=top_n)
         # particle weight
         # noinspection DuplicatedCode
-        p_weight_arr = pf.get_partcie_weight_arr()[descend_weight_index_arr]
+        p_weight_arr = pf.get_partcie_weight_arr()
 
         # Hyperparameters weighted average
         # noinspection DuplicatedCode
         lam_0_arr = np.array(
-            [particle.lambda0 for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
+            [particle.lambda0 for idx, particle in particle_index_pair_list])
         lam_0 = np.average(lam_0_arr, weights=p_weight_arr)
-        beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list if
-                             idx in descend_weight_index_arr])
+        beta_arr = np.array([particle.beta.reshape(-1) for idx, particle in particle_index_pair_list])
         beta = np.average(beta_arr, axis=0, weights=p_weight_arr)
         tau_arr = np.array(
-            [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list if idx in descend_weight_index_arr])
+            [particle.tau.reshape(-1) for idx, particle in particle_index_pair_list])
         tau = np.average(tau_arr, axis=0, weights=p_weight_arr)
         logging.info(
-            f'Top {top_n} average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
+            f'Average weighted value of three parameters: \n lambda_0: {lam_0}\n beta: {beta}\n tau: {tau}\n')
 
         pred_lambda0_array = np.append(pred_lambda0_array, lam_0)
         pred_beta_array = np.vstack((pred_beta_array, beta))
