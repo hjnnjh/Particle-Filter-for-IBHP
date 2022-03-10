@@ -20,12 +20,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyro
 import pyro.distributions as dist
-import scipy.stats as sta
 import scipy.special as spe
+import scipy.stats as sta
 import torch
 
 from IBHP_simulation import IBHP
 
+
+# ------------------------------ utils ------------------------------
 
 # noinspection PyPep8Naming,PyShadowingNames
 def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
@@ -47,6 +49,15 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     word_corpus_mat = np.array([transfer_occurrence_data(index_list[i], word_occurrence_list[i])
                                 for i in range(len(index_list))])
     return word_corpus_mat
+
+
+def numpy_cartesian_product(*np_vec: np.ndarray):
+    """
+    calculate the cartesian product for a ndarray
+    :param np_vec: 1 dim ndarray
+    :return:
+    """
+    return np.dstack(np.meshgrid(*np_vec)).reshape(-1, len(np_vec))
 
 
 # noinspection PyMissingConstructor,DuplicatedCode,PyPep8Naming,PyShadowingNames
@@ -463,7 +474,7 @@ class Particle(IBHP):
     #     print(f'[event {n}] updated tau: {self.tau}')
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameters(self, n, N: int = 50, method: str = 'maximum'):
+    def update_hyperparameters(self, n, N: int = 100, method: str = 'maximum'):
         """
         update lambda0, beta, tau
         :param method: 'maximum' or 'average', if 'maximum' received, choose the sample that makes the
@@ -474,23 +485,23 @@ class Particle(IBHP):
         :return:
         """
         # draw candidate beta
-        beta_candi_mat = sta.gamma.rvs(a=3, size=(N, self.L))
+        beta_candi_mat = sta.gamma.rvs(a=3, size=N)
         # calculate Cartesian product of beta arrays
-        beta_candi_mat = np.array(list(product(*beta_candi_mat.tolist()))).T
+        beta_candi_mat = numpy_cartesian_product(beta_candi_mat, beta_candi_mat, beta_candi_mat).T
         # calculate prior for candidate beta
-        beta_p_prior_mat = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=3), beta_candi_mat)))
+        beta_p_prior_mat = sta.gamma.pdf(x=beta_candi_mat, a=3)
 
         # draw candidate tau
-        tau_candi_mat = sta.gamma.rvs(a=1, size=(N, self.L))
-        # calculate Cartesian product of beta arrays
-        tau_candi_mat = np.array(list(product(*tau_candi_mat.tolist()))).T  # (L, N)
+        tau_candi_mat = sta.gamma.rvs(a=1, size=N)
+        # calculate Cartesian product of tau arrays
+        tau_candi_mat = numpy_cartesian_product(tau_candi_mat, tau_candi_mat, tau_candi_mat).T  # (L, N)
         # calculate prior for candidate tau
-        tau_p_prior_mat = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=1), beta_candi_mat)))
+        tau_p_prior_mat = sta.gamma.pdf(x=tau_candi_mat, a=1)
 
         # draw candidate lambda0 from prior
         lambda0_candi_arr = sta.gamma.rvs(a=3, size=beta_candi_mat.shape[1])
         # calculate prior for candidate lambda0
-        lambda0_p_prior_arr = np.array(list(map(lambda x: sta.gamma.pdf(x=x, a=3), lambda0_candi_arr)))
+        lambda0_p_prior_arr = sta.gamma.pdf(x=lambda0_candi_arr, a=3)
 
         # calculate log-likelihood
         log_hawkes_likelihood_func = np.vectorize(partial(self.log_hawkes_likelihood, n), signature='(),(n),(n)->()')
@@ -521,7 +532,8 @@ class Particle(IBHP):
             raise ValueError('Parameter `method` got an unexpected value')
 
         print(
-            f'log hawkes likelihood using updated parameters: {self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta, tau=self.tau)}')
+            f'log hawkes likelihood using updated parameters: '
+            f'{self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta, tau=self.tau)}')
 
     # noinspection SpellCheckingInspection
     def update_log_particle_weight(self, old_particle_weight, n: int):
