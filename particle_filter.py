@@ -12,7 +12,6 @@ import logging
 import os.path
 from collections import Counter
 from functools import partial
-from itertools import product
 from multiprocessing import Pool, cpu_count
 from typing import List, Tuple
 
@@ -142,6 +141,8 @@ class Particle(IBHP):
         self.calculate_lambda_k(n=1)
         self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
 
+        self.collect_factor_intensity(n=1)
+
     def sample_particle_following_event_status(self, n: int):
         """
         Generate the particle state corresponding to the following event
@@ -199,6 +200,7 @@ class Particle(IBHP):
         kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
                                          np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
+        self.collect_factor_intensity(n=n)
 
     # noinspection SpellCheckingInspection
     def log_hawkes_likelihood(self, n, lambda0, beta, tau):
@@ -474,7 +476,7 @@ class Particle(IBHP):
     #     print(f'[event {n}] updated tau: {self.tau}')
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameters(self, n, N: int = 100, method: str = 'maximum'):
+    def update_hyperparameters(self, n, N: int = 75, method: str = 'maximum'):
         """
         update lambda0, beta, tau
         :param method: 'maximum' or 'average', if 'maximum' received, choose the sample that makes the
@@ -487,19 +489,19 @@ class Particle(IBHP):
         # draw candidate beta
         beta_candi_mat = sta.gamma.rvs(a=3, size=N)
         # calculate Cartesian product of beta arrays
-        beta_candi_mat = numpy_cartesian_product(beta_candi_mat, beta_candi_mat, beta_candi_mat).T
+        beta_candi_mat = numpy_cartesian_product(beta_candi_mat, beta_candi_mat, beta_candi_mat)
         # calculate prior for candidate beta
         beta_p_prior_mat = sta.gamma.pdf(x=beta_candi_mat, a=3)
 
         # draw candidate tau
         tau_candi_mat = sta.gamma.rvs(a=1, size=N)
         # calculate Cartesian product of tau arrays
-        tau_candi_mat = numpy_cartesian_product(tau_candi_mat, tau_candi_mat, tau_candi_mat).T  # (L, N)
+        tau_candi_mat = numpy_cartesian_product(tau_candi_mat, tau_candi_mat, tau_candi_mat)  # (N, L)
         # calculate prior for candidate tau
         tau_p_prior_mat = sta.gamma.pdf(x=tau_candi_mat, a=1)
 
         # draw candidate lambda0 from prior
-        lambda0_candi_arr = sta.gamma.rvs(a=3, size=beta_candi_mat.shape[1])
+        lambda0_candi_arr = sta.gamma.rvs(a=3, size=beta_candi_mat.shape[0])
         # calculate prior for candidate lambda0
         lambda0_p_prior_arr = sta.gamma.pdf(x=lambda0_candi_arr, a=3)
 
@@ -512,8 +514,8 @@ class Particle(IBHP):
         # log_hawkes_likelihood_arr = log_hawkes_likelihood_arr / np.sum(log_hawkes_likelihood_arr)
 
         # calculate sample weight
-        log_weight_arr = np.log(lambda0_p_prior_arr) + np.sum(np.log(beta_p_prior_mat), axis=0) + np.sum(
-            np.log(tau_p_prior_mat), axis=0) + log_hawkes_likelihood_arr
+        log_weight_arr = np.log(lambda0_p_prior_arr) + np.sum(np.log(beta_p_prior_mat), axis=1) + np.sum(
+            np.log(tau_p_prior_mat), axis=1) + log_hawkes_likelihood_arr
         # normalize weight using softmax func
         weight_arr = spe.softmax(log_weight_arr)
 
@@ -521,8 +523,8 @@ class Particle(IBHP):
         if method is 'maximum':
             best_sample_index = np.argmax(log_hawkes_likelihood_arr)
             self.lambda0 = lambda0_candi_arr[best_sample_index]
-            self.beta = beta_candi_mat[:, best_sample_index]
-            self.tau = tau_candi_mat[:, best_sample_index]
+            self.beta = beta_candi_mat[best_sample_index]
+            self.tau = tau_candi_mat[best_sample_index]
         elif method is 'average':
             # new hyperparameters, weighted average
             self.lambda0 = weight_arr @ lambda0_candi_arr
@@ -731,7 +733,7 @@ def plot_particle_intensity(true_intensity_array: np.ndarray, particle_index_pai
         ax[i].set_xlabel('n')
         ax[i].set_ylabel(r'$\lambda(t)}$')
     fig.tight_layout()
-    plt.show()
+    # plt.show()
     # fig.savefig('./img/pred_intensity.png')
 
 
@@ -741,7 +743,7 @@ def plot_mh_samples(sample_array: np.ndarray, title: str):
     ax.plot(x, sample_array, color='b')
     ax.set_title(f'{title}')
     ax.set_xlabel('sample_num')
-    plt.show()
+    # plt.show()
 
 
 # noinspection PyShadowingNames
@@ -773,13 +775,13 @@ def plot_parameters(true_lambda_0, true_beta: np.ndarray, true_tau: np.ndarray, 
         # ax[l + kernel_num].legend()
     fig.tight_layout()
     # fig.savefig('./img/parameters.png')
-    plt.show()
+    # plt.show()
 
 
 # noinspection SpellCheckingInspection
 if __name__ == '__main__':
     n_sample = 100
-    n_particle = 10
+    n_particle = 50
 
     if not os.path.exists('./img'):
         os.mkdir('./img')
@@ -800,6 +802,12 @@ if __name__ == '__main__':
     logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
     word_dict = np.arange(1000)
     logging.info(f'Dictionary: {word_dict}\n')
+
+    # save true value
+    np.save('./model-result/true_intensity_array.npy', true_intensity_array)
+    np.save('./model-result/time_stamp_array.npy', ibhp.timestamp_array)
+    np.save('./model-result/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
+    np.save('./model-result/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
 
     # filtering
     # noinspection PyBroadException,SpellCheckingInspection
@@ -842,10 +850,29 @@ if __name__ == '__main__':
     pred_beta_array = beta.reshape(1, -1)
     pred_tau_array = tau.reshape(1, -1)
 
-    plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
+    # noinspection DuplicatedCode
+    plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta,
+                    pred_beta=pred_beta_array,
                     pred_tau=pred_tau_array,
                     pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
+    # save result
+    # params
+    np.save('./model-result/pred_lambda_0.npy', pred_lambda0_array)
+    np.save('./model-result/pred_beta.npy', pred_beta_array)
+    np.save('./model-result/pred_tau.npy', pred_tau_array)
+
+    # particle weight
+    np.save('./model-result/particle_weight.npy', pf.get_partcie_weight_arr())
+
+    # hidden variables in specific particle
+    for idx, particle in particle_index_pair_list:
+        if not os.path.exists(f'./model-result/particle-{idx}'):
+            os.mkdir(f'./model-result/particle-{idx}')
+        np.save(f'./model-result/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
+        np.save(f'./model-result/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
+
+    # resampling
     N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
     if N_eff < 2 / 3 * pf.get_particle_num():
         logging.info(f'[event 1] Resampling particles')
@@ -894,12 +921,31 @@ if __name__ == '__main__':
         pred_beta_array = np.vstack((pred_beta_array, beta))
         pred_tau_array = np.vstack((pred_tau_array, tau))
 
+        # noinspection DuplicatedCode
         plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
                         pred_tau=pred_tau_array,
                         pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
+        # save result
+        # params
+        np.save('./model-result/pred_lambda_0.npy', pred_lambda0_array)
+        np.save('./model-result/pred_beta.npy', pred_beta_array)
+        np.save('./model-result/pred_tau.npy', pred_tau_array)
+
+        # particle weight
+        np.save('./model-result/particle_weight.npy', pf.get_partcie_weight_arr())
+
+        # hidden variables in specific particle
+        for idx, particle in particle_index_pair_list:
+            if not os.path.exists(f'./model-result/particle-{idx}'):
+                os.mkdir(f'./model-result/particle-{idx}')
+            np.save(f'./model-result/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
+            np.save(f'./model-result/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
+
         if n == n_sample:
             break
+
+        # resampling
         N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
         if N_eff < 2 / 3 * pf.get_particle_num():
             logging.info(f'[event {n}] Resampling particles')
