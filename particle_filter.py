@@ -22,6 +22,7 @@ import pyro.distributions as dist
 import scipy.special as spe
 import scipy.stats as sta
 import torch
+from sklearn.utils.extmath import cartesian
 
 from IBHP_simulation import IBHP
 
@@ -50,15 +51,6 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     return word_corpus_mat
 
 
-def numpy_cartesian_product(*np_vec: np.ndarray):
-    """
-    calculate the cartesian product for a ndarray
-    :param np_vec: 1 dim ndarray
-    :return:
-    """
-    return np.dstack(np.meshgrid(*np_vec)).reshape(-1, len(np_vec))
-
-
 # noinspection PyMissingConstructor,DuplicatedCode,PyPep8Naming,PyShadowingNames
 class Particle(IBHP):
     # noinspection SpellCheckingInspection
@@ -72,19 +64,30 @@ class Particle(IBHP):
                         level=logging.INFO)
 
     # noinspection PyShadowingNames
-    def __init__(self, word_dict: np.ndarray, timestamp_array: np.ndarray, T_array: np.ndarray, L: int = 3):
+    def __init__(self, word_dict: np.ndarray,
+                 timestamp_array: np.ndarray, T_array: np.ndarray,
+                 simulation_w: np.ndarray = None, simulation_v: np.ndarray = None, fix_params: bool = True,
+                 L: int = 3):
         """
         :param T_array: text vector
         :param L: Number of base kernels
         :param word_dict: dictionary
         """
         super(Particle, self).__init__()
+        self.fix_params = fix_params
+        self.simulation_v = simulation_v
+        self.simulation_w = simulation_w
         self.log_particle_weight = None
         self.T_array = T_array
         self.timestamp_array = timestamp_array
         self.L = L
         self.word_dict = word_dict
         self.S = len(self.word_dict)
+        assert self.simulation_w.shape[1] == self.simulation_v.shape[1]
+        self.real_factor_num = self.simulation_w.shape[1]
+        if fix_params:
+            assert isinstance(self.simulation_w, np.ndarray)
+            assert isinstance(self.simulation_v, np.ndarray)
 
     def calculate_lambda_k(self, n):
         """
@@ -124,15 +127,34 @@ class Particle(IBHP):
 
         # Generate the topic occurrence matrix c, set all c_k=1
         self.c = np.ones((1, self.K))  # matrix, shape=(1, self.K)
-        # Generate w
-        with pyro.plate('wk_1', self.K):
-            self.w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
-        self.w = self.w.numpy().T  # matrix, shape=(L, K), each column is the weight of each k
-        # Generate v
-        with pyro.plate('vk_1', self.K):
-            self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
-        self.v = self.v.numpy().T  # matrix, shape=(S, K), Each column is a distribution of
-        # words for each k
+
+        if self.fix_params:  # set w equals w generated in simulation process
+            if self.real_factor_num >= self.K:
+                self.w = self.simulation_w[:, : self.K]
+            else:
+                with pyro.plate('wk_1', self.K - self.real_factor_num):
+                    w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
+                w = w.numpy().T  # matrix, shape=(L, K), each column is the weight of each k
+                self.w = np.hstack((self.simulation_w[:, : self.K], w))
+        else:
+            # Generate w
+            with pyro.plate('wk_1', self.K):
+                self.w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
+            self.w = self.w.numpy().T  # matrix, shape=(L, K), each column is the weight distribution for each k
+
+        if self.fix_params:  # set v equals v generated in simulation process
+            if self.real_factor_num >= self.K:
+                self.v = self.simulation_v[:, : self.K]
+            else:
+                with pyro.plate('vk_1', self.K - self.real_factor_num):
+                    v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
+                v = v.numpy().T  # matrix, shape=(L, K), each column is the weight of each k
+                self.v = np.hstack((self.simulation_w[:, : self.K], v))
+        else:
+            # Generate v
+            with pyro.plate('vk_1', self.K):
+                self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
+            self.v = self.v.numpy().T  # matrix, shape=(S, K), Each column is a distribution of words for each k
 
         # calculate kappa_n
         self.kappa_n = self.w.T @ self.beta
@@ -152,10 +174,7 @@ class Particle(IBHP):
         # Calculate the probability of generating c from the existing K topics
         p = self.lambda_k_array / (self.lambda0 / self.K + self.lambda_k_array)
         # Generate topic occurrence vectors with K topics
-        generate_old_c_func = np.vectorize(self.generate_c)
-        c_old = generate_old_c_func(p)
-        # calculate delta_t_vec, tn-ti
-        delta_t_vec = self.timestamp_array[n - 1] - self.timestamp_array[: n]
+        c_old = sta.bernoulli.rvs(p)
 
         # Generate K+
         k_plus = np.random.poisson(self.lambda0 / (self.lambda0 + np.sum(self.lambda_k_array)), 1)[0]
@@ -164,7 +183,8 @@ class Particle(IBHP):
         if k_plus == 0:
             while np.all(c_old == 0):
                 logging.info(f'[event {n}]When K+ is 0, c_old is also all 0, and c_old is regenerated')
-                c_old = generate_old_c_func(p)
+                c_old = sta.bernoulli.rvs(p)
+
         # update K
         self.K = self.K + k_plus
 
@@ -175,17 +195,38 @@ class Particle(IBHP):
             self.c = np.hstack((self.c, np.zeros((self.c.shape[0], k_plus))))  # Complete the existing c matrix with 0
             self.c = np.vstack((self.c, c))  # Add the new c vector to the c matrix
 
-            # If K+ is greater than 0, generate a new w_k, update self.w
-            with pyro.plate(f'wk_{n}', k_plus):
-                w_new = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
-            w_new = w_new.numpy().T
-            self.w = np.hstack((self.w, w_new))
+            # fix w matrix
+            if self.fix_params:
+                if self.real_factor_num >= self.K:
+                    self.w = self.simulation_w[:, :self.K]
+                else:
+                    with pyro.plate(f'wk_{n}', self.K - self.real_factor_num):
+                        w = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
+                    w = w.numpy().T
+                    self.w = np.hstack((self.simulation_w[:, :self.K], w))
+                w_new = self.w[:, -k_plus:]
+            else:
+                # If K+ is greater than 0, generate a new w_k, update self.w
+                with pyro.plate(f'wk_{n}', k_plus):
+                    w_new = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
+                w_new = w_new.numpy().T
+                self.w = np.hstack((self.w, w_new))
 
-            # If K+ is greater than 0, generate a new v_k, update self.v
-            with pyro.plate(f'vk_{n}', k_plus):
-                v_new = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
-            v_new = v_new.numpy().T
-            self.v = np.hstack((self.v, v_new))
+            # fix v matrix
+            if self.fix_params:
+                if self.real_factor_num >= self.K:
+                    self.v = self.simulation_v[:, :self.K]
+                else:
+                    with pyro.plate(f'vk_{n}', self.K - self.real_factor_num):
+                        v = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
+                    v = v.numpy().T
+                    self.v = np.hstack((self.simulation_v[:, :self.K], v))
+            else:
+                # If K+ is greater than 0, generate a new v_k, update self.v
+                with pyro.plate(f'vk_{n}', k_plus):
+                    v_new = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
+                v_new = v_new.numpy().T
+                self.v = np.hstack((self.v, v_new))
 
             # If K+ is greater than 0, calculate a new kappa_n
             new_kappa = w_new.T @ self.beta
@@ -248,7 +289,6 @@ class Particle(IBHP):
 
         # log hawkes likelihood
         log_hawkes_likelihood = log_integral_term + log_prod_term
-        # print(f'log hawkes likelihood when updating: {log_hawkes_likelihood}')
         return log_hawkes_likelihood
 
     # ----------------------------------- Metropolis Hastings Algorithm -----------------------------------
@@ -476,32 +516,35 @@ class Particle(IBHP):
     #     print(f'[event {n}] updated tau: {self.tau}')
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameters(self, n, N: int = 75, method: str = 'maximum'):
+    def update_hyperparameters(self, n, random_N: int = 10000, cartesian_N: int = 25, method: str = 'maximum'):
         """
         update lambda0, beta, tau
+        :param random_N: sample numbers for random
         :param method: 'maximum' or 'average', if 'maximum' received, choose the sample that makes the
         likelihood greatest.
-        :param N: sample numbers for beta and tau
+        :param cartesian_N: sample numbers for cartesian
         (sample number of lambda0 is the shape of product matrix of beta or tau)
         :param n: event number
         :return:
         """
         # draw candidate beta
-        beta_candi_mat = sta.gamma.rvs(a=3, size=N)
-        # calculate Cartesian product of beta arrays
-        beta_candi_mat = numpy_cartesian_product(beta_candi_mat, beta_candi_mat, beta_candi_mat)
+        beta_candi_mat_random = sta.gamma.rvs(a=3, size=(random_N, self.L))
+        # calculate Cartesian product of beta arrays, the aim is to cover a more comprehensive sample space
+        beta_candi_mat_cartesian = cartesian((sta.gamma.rvs(a=3, size=cartesian_N),) * self.L)
+        beta_candi_mat = np.vstack((beta_candi_mat_random, beta_candi_mat_cartesian))
         # calculate prior for candidate beta
         beta_p_prior_mat = sta.gamma.pdf(x=beta_candi_mat, a=3)
 
         # draw candidate tau
-        tau_candi_mat = sta.gamma.rvs(a=1, size=N)
+        tau_candi_mat_random = sta.gamma.rvs(a=1, size=(random_N, self.L))
         # calculate Cartesian product of tau arrays
-        tau_candi_mat = numpy_cartesian_product(tau_candi_mat, tau_candi_mat, tau_candi_mat)  # (N, L)
+        tau_candi_mat_cartesian = cartesian((sta.gamma.rvs(a=1, size=cartesian_N),) * self.L)  # (N, L)
+        tau_candi_mat = np.vstack((tau_candi_mat_random, tau_candi_mat_cartesian))
         # calculate prior for candidate tau
         tau_p_prior_mat = sta.gamma.pdf(x=tau_candi_mat, a=1)
 
         # draw candidate lambda0 from prior
-        lambda0_candi_arr = sta.gamma.rvs(a=3, size=beta_candi_mat.shape[0])
+        lambda0_candi_arr = sta.gamma.rvs(a=3, size=random_N + cartesian_N ** self.L)
         # calculate prior for candidate lambda0
         lambda0_p_prior_arr = sta.gamma.pdf(x=lambda0_candi_arr, a=3)
 
@@ -570,6 +613,9 @@ class Particle(IBHP):
         # print(f'[event {n}] lambda_prime: {lambda_prime}')
         log_likelihood_timestamp = np.log(lambda_prime) - lambda_prime
 
+        log_likelihood_timestamp = self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta,
+                                                              tau=self.tau)
+
         # log likelihood for text
         kappa_n_nonzero_index = np.argwhere(self.c[n - 1] != 0)[:, 0]
         vn_avg = np.einsum('ij->i', self.v[:, kappa_n_nonzero_index]) / np.count_nonzero(self.c[n - 1])
@@ -589,7 +635,8 @@ class Filtering:
     """
 
     def __init__(self, timestamp_array: np.ndarray, T_array: np.ndarray,
-                 n_particle: int, word_dict: np.ndarray, L: int = 3):
+                 n_particle: int, word_dict: np.ndarray,
+                 simulation_w: np.ndarray, simulation_v: np.ndarray, L: int = 3):
         """
         Generates particles and initializes particle weights
 
@@ -603,7 +650,11 @@ class Filtering:
         self.n_sample = T_array.shape[0]
         self.n_particle = n_particle
         self.word_corpus = word_dict
-        self.particle_list = [Particle(word_dict=word_dict, timestamp_array=timestamp_array, T_array=T_array, L=L) for
+        self.particle_list = [Particle(word_dict=word_dict,
+                                       timestamp_array=timestamp_array, T_array=T_array,
+                                       simulation_w=simulation_w,
+                                       simulation_v=simulation_v,
+                                       L=L) for
                               i in np.arange(self.n_particle)]
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
 
@@ -809,11 +860,11 @@ if __name__ == '__main__':
     np.save('./model-result/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
     np.save('./model-result/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
 
-    # filtering
+    # -------------------------------- filtering --------------------------------
     # noinspection PyBroadException,SpellCheckingInspection
     logging.info(f'\n{"-" * 40}  Start particle filter parameter estimation {"-" * 40}\n')
     pf = Filtering(timestamp_array=ibhp.timestamp_array, T_array=ibhp.text, n_particle=n_particle,
-                   word_dict=word_dict, L=3)
+                   word_dict=word_dict, L=3, simulation_w=ibhp.w, simulation_v=ibhp.v)
     particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(pf.get_particle_list())]
     # event 1 status
     pool_event_1 = Pool(cpu_count())
@@ -827,6 +878,7 @@ if __name__ == '__main__':
 
     # ------------------------------- output -------------------------------
     top_n = 3  # number of particles which need to plot
+    # noinspection DuplicatedCode
     descend_weight_index_arr = np.argsort(
         - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
     # noinspection DuplicatedCode
@@ -851,10 +903,10 @@ if __name__ == '__main__':
     pred_tau_array = tau.reshape(1, -1)
 
     # noinspection DuplicatedCode
-    plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta,
-                    pred_beta=pred_beta_array,
-                    pred_tau=pred_tau_array,
-                    pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
+    # plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta,
+    #                 pred_beta=pred_beta_array,
+    #                 pred_tau=pred_tau_array,
+    #                 pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
     # save result
     # params
@@ -894,12 +946,14 @@ if __name__ == '__main__':
 
         # ------------------------------- output -------------------------------
         # plot pred intensity
+        # noinspection DuplicatedCode
         descend_weight_index_arr = np.argsort(
             - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
-        plot_particle_intensity(true_intensity_array=true_intensity_array,
-                                particle_index_pair_list=[(idx, particle) for idx, particle in particle_index_pair_list
-                                                          if idx in descend_weight_index_arr],
-                                rows=top_n)
+        # plot_particle_intensity(true_intensity_array=true_intensity_array,
+        #                         particle_index_pair_list=[(idx, particle) for idx, particle in
+        #                                                   particle_index_pair_list
+        #                                                   if idx in descend_weight_index_arr],
+        #                         rows=top_n)
         # particle weight
         # noinspection DuplicatedCode
         p_weight_arr = pf.get_partcie_weight_arr()
@@ -922,9 +976,9 @@ if __name__ == '__main__':
         pred_tau_array = np.vstack((pred_tau_array, tau))
 
         # noinspection DuplicatedCode
-        plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
-                        pred_tau=pred_tau_array,
-                        pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
+        # plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta, pred_beta=pred_beta_array,
+        #                 pred_tau=pred_tau_array,
+        #                 pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
 
         # save result
         # params
