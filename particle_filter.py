@@ -481,7 +481,8 @@ class Particle(IBHP):
     #                 updated_tau_list[idx].append(updated_tau_l)
     #                 tau[idx] = updated_tau_l
     #         else:
-    #             updated_lambda0 = self.update_lambda0(n=n, n_mh=i + 1, beta=beta, tau=tau, old_lambda0=updated_lambda0)
+    #             updated_lambda0 = self.update_lambda0(n=n, n_mh=i + 1, beta=beta, tau=tau,
+    #                                                   old_lambda0=updated_lambda0)
     #             updated_lambda0_array = np.append(updated_lambda0_array, updated_lambda0)
     #             for idx in np.arange(self.L):
     #                 updated_beta_l = self.update_beta(n=n, n_mh=i + 1, index=idx, lambda0=updated_lambda0, beta=beta,
@@ -610,11 +611,7 @@ class Particle(IBHP):
             lambda_prime = self.lambda0 * (self.timestamp_array[n - 1] - self.timestamp_array[n - 2]) + exp_term_res
 
         # calculate log likelihood for timestamp
-        # print(f'[event {n}] lambda_prime: {lambda_prime}')
         log_likelihood_timestamp = np.log(lambda_prime) - lambda_prime
-
-        log_likelihood_timestamp = self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta,
-                                                              tau=self.tau)
 
         # log likelihood for text
         kappa_n_nonzero_index = np.argwhere(self.c[n - 1] != 0)[:, 0]
@@ -730,7 +727,7 @@ class Filtering:
 
     def generate_following_event_status_for_each_paritcle(self, n: int, particle_idx_pair: Tuple[int, Particle]):
         """
-
+        Generate the state corresponding to the following event for each particle
         :param n:
         :param particle_idx_pair:
         :return:
