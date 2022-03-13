@@ -10,7 +10,9 @@
 """
 import logging
 import os.path
+import time
 from collections import Counter
+from copy import deepcopy
 from functools import partial
 from multiprocessing import Pool, cpu_count
 from typing import List, Tuple
@@ -51,6 +53,38 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     return word_corpus_mat
 
 
+# ---------------------------- simulation data ----------------------------
+# noinspection SpellCheckingInspection
+n_sample = 500
+n_particle = 50
+
+if not os.path.exists('./img'):
+    os.mkdir('./img')
+
+# save the model result
+if not os.path.exists('./model-result'):
+    os.mkdir('./model-result')
+
+logging.info(f'set n_sample to {n_sample}')
+logging.info(f'set n_particle to {n_particle}')
+
+# noinspection SpellCheckingInspection
+ibhp = IBHP(n_sample)
+ibhp.generate_data()
+true_intensity_array = ibhp.lambda_tn_array
+logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
+logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
+logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
+word_dict = np.arange(1000)
+logging.info(f'Dictionary: {word_dict}\n')
+
+# save true value
+np.save('./model-result/true_intensity_array.npy', true_intensity_array)
+np.save('./model-result/time_stamp_array.npy', ibhp.timestamp_array)
+np.save('./model-result/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
+np.save('./model-result/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
+
+
 # noinspection PyMissingConstructor,DuplicatedCode,PyPep8Naming,PyShadowingNames
 class Particle(IBHP):
     # noinspection SpellCheckingInspection
@@ -66,7 +100,7 @@ class Particle(IBHP):
     # noinspection PyShadowingNames
     def __init__(self, word_dict: np.ndarray,
                  timestamp_array: np.ndarray, T_array: np.ndarray,
-                 simulation_w: np.ndarray = None, simulation_v: np.ndarray = None, fix_params: bool = True,
+                 simulation_w: np.ndarray = None, simulation_v: np.ndarray = None, fix_params: bool = False,
                  L: int = 3):
         """
         :param T_array: text vector
@@ -75,19 +109,19 @@ class Particle(IBHP):
         """
         super(Particle, self).__init__()
         self.fix_params = fix_params
-        self.simulation_v = simulation_v
-        self.simulation_w = simulation_w
         self.log_particle_weight = None
         self.T_array = T_array
         self.timestamp_array = timestamp_array
         self.L = L
         self.word_dict = word_dict
         self.S = len(self.word_dict)
-        assert self.simulation_w.shape[1] == self.simulation_v.shape[1]
-        self.real_factor_num = self.simulation_w.shape[1]
         if fix_params:
+            self.simulation_v = simulation_v
+            self.simulation_w = simulation_w
             assert isinstance(self.simulation_w, np.ndarray)
             assert isinstance(self.simulation_v, np.ndarray)
+            assert self.simulation_w.shape[1] == self.simulation_v.shape[1]
+            self.real_factor_num = self.simulation_w.shape[1]
 
     def calculate_lambda_k(self, n):
         """
@@ -175,6 +209,8 @@ class Particle(IBHP):
         p = self.lambda_k_array / (self.lambda0 / self.K + self.lambda_k_array)
         # Generate topic occurrence vectors with K topics
         c_old = sta.bernoulli.rvs(p)
+        if not isinstance(c_old, np.ndarray):
+            c_old = np.array([c_old])
 
         # Generate K+
         k_plus = np.random.poisson(self.lambda0 / (self.lambda0 + np.sum(self.lambda_k_array)), 1)[0]
@@ -184,11 +220,13 @@ class Particle(IBHP):
             while np.all(c_old == 0):
                 logging.info(f'[event {n}]When K+ is 0, c_old is also all 0, and c_old is regenerated')
                 c_old = sta.bernoulli.rvs(p)
+                if not isinstance(c_old, np.ndarray):
+                    c_old = np.array([c_old])
 
         # update K
         self.K = self.K + k_plus
 
-        if k_plus:
+        if k_plus != 0:
             # If K+ is greater than 0, initialize a new topic occurrence vector
             c_new = np.ones(k_plus)
             c = np.hstack((c_old, c_new))
@@ -553,13 +591,10 @@ class Particle(IBHP):
         log_hawkes_likelihood_func = np.vectorize(partial(self.log_hawkes_likelihood, n), signature='(),(n),(n)->()')
         log_hawkes_likelihood_arr = log_hawkes_likelihood_func(lambda0_candi_arr, beta_candi_mat, tau_candi_mat)
 
-        # normalize log-likelihood
-        # log_hawkes_likelihood_arr = np.exp(log_hawkes_likelihood_arr - np.max(log_hawkes_likelihood_arr))
-        # log_hawkes_likelihood_arr = log_hawkes_likelihood_arr / np.sum(log_hawkes_likelihood_arr)
-
         # calculate sample weight
         log_weight_arr = np.log(lambda0_p_prior_arr) + np.sum(np.log(beta_p_prior_mat), axis=1) + np.sum(
             np.log(tau_p_prior_mat), axis=1) + log_hawkes_likelihood_arr
+
         # normalize weight using softmax func
         weight_arr = spe.softmax(log_weight_arr)
 
@@ -576,10 +611,6 @@ class Particle(IBHP):
             self.tau = weight_arr @ tau_candi_mat
         else:
             raise ValueError('Parameter `method` got an unexpected value')
-
-        print(
-            f'log hawkes likelihood using updated parameters: '
-            f'{self.log_hawkes_likelihood(n=n, lambda0=self.lambda0, beta=self.beta, tau=self.tau)}')
 
     # noinspection SpellCheckingInspection
     def update_log_particle_weight(self, old_particle_weight, n: int):
@@ -607,7 +638,7 @@ class Particle(IBHP):
             beta_tau_exp_term = multiply_func(self.beta * self.tau, exp_term)  # (T, L)
             nominator = np.einsum('lk,tl->tk', self.w, beta_tau_exp_term) * self.c[: n - 1]  # (T, K)
             fraction = nominator / kappa_history_count
-            exp_term_res = np.sum(fraction[:, kappa_n_nonzero_index])
+            exp_term_res = np.sum(fraction[:, kappa_n_nonzero_index])  # kappa_n_nonzero_index
             lambda_prime = self.lambda0 * (self.timestamp_array[n - 1] - self.timestamp_array[n - 2]) + exp_term_res
 
         # calculate log likelihood for timestamp
@@ -621,8 +652,34 @@ class Particle(IBHP):
         log_likelihood_text = 0
         for k, v in count_dict.items():
             log_likelihood_text += v * np.log(vn_avg[k])
+
+        if hasattr(self, 'FLAG'):
+            print(f'Fixed particle\'s log_likelihood_timestamp: {log_likelihood_timestamp}')
+            print(f'Fixed particle\'s log_likelihood_text: {log_likelihood_text}\n')
+        else:
+            print(f'log_likelihood_timestamp: {log_likelihood_timestamp}')
+            print(f'log_likelihood_text: {log_likelihood_text}\n')
+
         # Calculate the updated log particle weight
         self.log_particle_weight = np.log(old_particle_weight) + log_likelihood_timestamp + log_likelihood_text
+
+
+# noinspection PyPep8Naming,PyShadowingNames
+class Fixed_Particle(Particle):
+
+    def __init__(self):
+        """
+        fix the parameters of this particle using the parameters that generated the simulation data
+        """
+        super(Fixed_Particle, self).__init__(T_array=ibhp.text, timestamp_array=ibhp.timestamp_array,
+                                             word_dict=word_dict)
+        self.lambda0 = ibhp.lambda0
+        self.beta = ibhp.beta
+        self.tau = ibhp.tau
+        self.w = ibhp.w
+        self.v = ibhp.v
+        self.c = ibhp.c
+        self.FLAG = 'Fixed'
 
 
 # noinspection PyPep8Naming,SpellCheckingInspection,PyShadowingNames
@@ -633,7 +690,7 @@ class Filtering:
 
     def __init__(self, timestamp_array: np.ndarray, T_array: np.ndarray,
                  n_particle: int, word_dict: np.ndarray,
-                 simulation_w: np.ndarray, simulation_v: np.ndarray, L: int = 3):
+                 simulation_w: np.ndarray = None, simulation_v: np.ndarray = None, L: int = 3):
         """
         Generates particles and initializes particle weights
 
@@ -645,6 +702,7 @@ class Filtering:
         """
         assert len(timestamp_array) == T_array.shape[0]
         self.n_sample = T_array.shape[0]
+        # self.n_particle = n_particle + 1
         self.n_particle = n_particle
         self.word_corpus = word_dict
         self.particle_list = [Particle(word_dict=word_dict,
@@ -652,7 +710,9 @@ class Filtering:
                                        simulation_w=simulation_w,
                                        simulation_v=simulation_v,
                                        L=L) for
-                              i in np.arange(self.n_particle)]
+                              i in np.arange(n_particle)]
+        # fixed_paritcle = Fixed_Particle()
+        # self.particle_list.append(fixed_paritcle)  # add a fixed particle to particle list
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
 
     def get_particle_list(self):
@@ -664,13 +724,13 @@ class Filtering:
     def get_partcie_weight_arr(self):
         return self.particle_weight_arr
 
-    def update_particle_weight_arr(self, particle_index_list: List[Tuple[int, Particle]]):
+    def update_particle_weight_arr(self, index_particle_pair_list: List[Tuple[int, Particle]]):
         """
         Update particle weight list
-        :param particle_index_list:
+        :param index_particle_pair_list:
         :return:
         """
-        for idx, particle in particle_index_list:
+        for idx, particle in index_particle_pair_list:
             self.particle_weight_arr[idx] = particle.log_particle_weight
 
     def normalize_particle_weight(self):
@@ -678,9 +738,7 @@ class Filtering:
         Normalize particle weights (map weights to 0-1 interval and sum to 1)
         :return:
         """
-        self.particle_weight_arr = np.exp(self.particle_weight_arr - np.max(self.particle_weight_arr))
-        self.particle_weight_arr = self.particle_weight_arr / np.sum(self.particle_weight_arr)
-        logging.info(f'particle weight: {self.particle_weight_arr}')
+        self.particle_weight_arr = spe.softmax(self.particle_weight_arr)
 
     def resample_particles(self):
         """
@@ -699,13 +757,18 @@ class Filtering:
             u = np.random.uniform(0, 1)
             nearest_elem_idx = np.argmin(np.abs(u - sorted_particle_weight))
             if u <= sorted_particle_weight[nearest_elem_idx]:
+                print(f'resample following particle less: {sorted_particle_index[nearest_elem_idx]}\n')
                 new_particle = self.particle_list[sorted_particle_index[nearest_elem_idx]]
             else:
+                while sorted_particle_weight[nearest_elem_idx] == sorted_particle_weight[nearest_elem_idx + 1]:
+                    nearest_elem_idx += 1
+                print(f'resample following particle more: {sorted_particle_index[nearest_elem_idx + 1]}\n')
                 new_particle = self.particle_list[sorted_particle_index[nearest_elem_idx + 1]]
-            new_particle_list.append(new_particle)
+
+            new_particle_list.append(deepcopy(new_particle))
         # Update the particle list and reset the particle weight
-        self.particle_list = new_particle_list
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
+        return new_particle_list
 
     def generate_first_event_status_for_each_particle(self, particle_idx_pair: Tuple[int, Particle]):
         """
@@ -715,15 +778,20 @@ class Filtering:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        logging.info(f'[event 1, paricle {particle_idx + 1}] Sampling particle status')
-        particle.sample_first_particle_event_status()
-        # Update hyperparameters and triggering kernels
-        logging.info(f'[event 1, paricle {particle_idx + 1}] Updating hyperparameters')
-        particle.update_hyperparameters(n=1)
-        # Calculate and update the log particle weights
-        logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight')
-        particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
-        return particle_idx, particle
+        if hasattr(particle, 'FLAG'):
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
+            return particle_idx, particle
+        else:
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Sampling particle status')
+            particle.sample_first_particle_event_status()
+            # Update hyperparameters and triggering kernels
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating hyperparameters')
+            particle.update_hyperparameters(n=1, method='average')
+            # Calculate and update the log particle weights
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
+            return particle_idx, particle
 
     def generate_following_event_status_for_each_paritcle(self, n: int, particle_idx_pair: Tuple[int, Particle]):
         """
@@ -734,40 +802,32 @@ class Filtering:
         """
         particle_idx = particle_idx_pair[0]
         particle = particle_idx_pair[1]
-        logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status')
-        particle.sample_particle_following_event_status(n)
-        logging.info(f'[event {n}, particle {particle_idx + 1}] Updating hyperparameters')
-        particle.update_hyperparameters(n=n)
-        logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight')
-        particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=n)
-        return particle_idx, particle
+        if hasattr(particle, 'FLAG'):
+            logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=n)
+            return particle_idx, particle
+        else:
+            logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status')
+            particle.sample_particle_following_event_status(n)
+            logging.info(f'[event {n}, particle {particle_idx + 1}] Updating hyperparameters')
+            particle.update_hyperparameters(n=n, method='average')
+            logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=n)
+            return particle_idx, particle
 
 
 # ---------------------- plot func ----------------------
 
-# noinspection PyShadowingNames
+# noinspection PyShadowingNames,SpellCheckingInspection
 def plot_particle_intensity(true_intensity_array: np.ndarray, particle_index_pair_list: List[Tuple[int, Particle]],
-                            rows=5):
-    # fig, ax = plt.subplots(dpi=400)
-    # pred_intensity_array = np.array([particle.lambda_tn_array for idx, particle in particle_index_pair_list])
-    # weight_array = np.array([particle_weight_arr[idx] for idx, particle in particle_index_pair_list])
-    # avg_pred_intensity_array = np.average(pred_intensity_array, weights=weight_array, axis=0)
-    # x_pred = np.arange(1, avg_pred_intensity_array.shape[0] + 1)
-    # x_true = np.arange(1, true_intensity_array.shape[0] + 1)
-    # ax.plot(x_true, true_intensity_array, color='r')
-    # ax.plot(x_pred, avg_pred_intensity_array, color='b')
-    # ax.set_title('Predicted Intensity')
-    # ax.set_xlabel('n')
-    # ax.set_ylabel(r'$\lambda(t)}$')
-    # fig.tight_layout()
-
+                            nrows=5):
     particle_num = len(particle_index_pair_list)
-    if not particle_num % rows:
-        fig, ax = plt.subplots(rows, particle_num // rows, dpi=400)
+    if not particle_num % nrows:
+        fig, ax = plt.subplots(nrows, particle_num // nrows, dpi=400)
     else:
-        fig, ax = plt.subplots(rows, particle_num // rows + 1, dpi=400)
-        for i in range(1, (rows - particle_num % rows) + 1):
-            fig.delaxes(ax[i, particle_num // rows])
+        fig, ax = plt.subplots(nrows, particle_num // nrows + 1, dpi=400)
+        for i in range(1, (nrows - particle_num % nrows) + 1):
+            fig.delaxes(ax[i, particle_num // nrows])
     ax = ax.flatten()
 
     x_true = np.arange(1, true_intensity_array.shape[0] + 1)
@@ -776,7 +836,6 @@ def plot_particle_intensity(true_intensity_array: np.ndarray, particle_index_pai
         x_pred = np.arange(1, pred_intensity_array.shape[0] + 1)
         ax[i].plot(x_true, true_intensity_array, color='r', label='True')
         ax[i].plot(x_pred, pred_intensity_array, color='b', label='Pred')
-        # ax[i].legend()
         ax[i].set_title(f'Particle {idx} Intensity')
         ax[i].set_xlabel('n')
         ax[i].set_ylabel(r'$\lambda(t)}$')
@@ -826,37 +885,7 @@ def plot_parameters(true_lambda_0, true_beta: np.ndarray, true_tau: np.ndarray, 
     # plt.show()
 
 
-# noinspection SpellCheckingInspection
 if __name__ == '__main__':
-    n_sample = 100
-    n_particle = 50
-
-    if not os.path.exists('./img'):
-        os.mkdir('./img')
-
-    # save the model result
-    if not os.path.exists('./model-result'):
-        os.mkdir('./model-result')
-
-    logging.info(f'set n_sample to {n_sample}')
-    logging.info(f'set n_particle to {n_particle}')
-
-    # noinspection SpellCheckingInspection
-    ibhp = IBHP(n_sample)
-    ibhp.generate_data()
-    true_intensity_array = ibhp.lambda_tn_array
-    logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
-    logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
-    logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
-    word_dict = np.arange(1000)
-    logging.info(f'Dictionary: {word_dict}\n')
-
-    # save true value
-    np.save('./model-result/true_intensity_array.npy', true_intensity_array)
-    np.save('./model-result/time_stamp_array.npy', ibhp.timestamp_array)
-    np.save('./model-result/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
-    np.save('./model-result/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
-
     # -------------------------------- filtering --------------------------------
     # noinspection PyBroadException,SpellCheckingInspection
     logging.info(f'\n{"-" * 40}  Start particle filter parameter estimation {"-" * 40}\n')
@@ -869,8 +898,14 @@ if __name__ == '__main__':
                                                      particle_index_pair_list))
     pool_event_1.close()
     pool_event_1.join()
-    pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
+
+    for idx, particle in particle_index_pair_list:
+        pf.particle_list[idx] = particle
+
+    # update particle_list
+    pf.update_particle_weight_arr(index_particle_pair_list=particle_index_pair_list)
     pf.normalize_particle_weight()
+
     logging.info(f'[event 1] Normalized particle weight: \n{pf.get_partcie_weight_arr()}')
 
     # ------------------------------- output -------------------------------
@@ -881,7 +916,7 @@ if __name__ == '__main__':
     # noinspection DuplicatedCode
     p_weight_arr = pf.get_partcie_weight_arr()
 
-    # Hyperparameters weighted average, use the best top_n particle
+    # parameters weighted average, use the best top_n particle
     # noinspection DuplicatedCode
     lam_0_arr = np.array(
         [particle.lambda0 for idx, particle in particle_index_pair_list])
@@ -900,11 +935,6 @@ if __name__ == '__main__':
     pred_tau_array = tau.reshape(1, -1)
 
     # noinspection DuplicatedCode
-    # plot_parameters(true_lambda_0=ibhp.lambda0, true_tau=ibhp.tau, true_beta=ibhp.beta,
-    #                 pred_beta=pred_beta_array,
-    #                 pred_tau=pred_tau_array,
-    #                 pred_lambda_0=pred_lambda0_array, n_sample=n_sample)
-
     # save result
     # params
     np.save('./model-result/pred_lambda_0.npy', pred_lambda0_array)
@@ -925,7 +955,8 @@ if __name__ == '__main__':
     N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
     if N_eff < 2 / 3 * pf.get_particle_num():
         logging.info(f'[event 1] Resampling particles')
-        pf.resample_particles()
+        new_particle_list = pf.resample_particles()
+        particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(new_particle_list)]
 
     # event 2~n status
     # noinspection SpellCheckingInspection
@@ -937,20 +968,15 @@ if __name__ == '__main__':
                              particle_index_pair_list))
         pool_event_n.close()
         pool_event_n.join()
-        pf.update_particle_weight_arr(particle_index_list=particle_index_pair_list)
+
+        for idx, particle in particle_index_pair_list:
+            pf.particle_list[idx] = particle
+
+        pf.update_particle_weight_arr(index_particle_pair_list=particle_index_pair_list)
         pf.normalize_particle_weight()
         logging.info(f'[event {n}] Normalized particle weight: {pf.get_partcie_weight_arr()}')
 
         # ------------------------------- output -------------------------------
-        # plot pred intensity
-        # noinspection DuplicatedCode
-        descend_weight_index_arr = np.argsort(
-            - pf.get_partcie_weight_arr())[: top_n]  # Index values sorted by particle weight in descending order
-        # plot_particle_intensity(true_intensity_array=true_intensity_array,
-        #                         particle_index_pair_list=[(idx, particle) for idx, particle in
-        #                                                   particle_index_pair_list
-        #                                                   if idx in descend_weight_index_arr],
-        #                         rows=top_n)
         # particle weight
         # noinspection DuplicatedCode
         p_weight_arr = pf.get_partcie_weight_arr()
@@ -1000,4 +1026,5 @@ if __name__ == '__main__':
         N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
         if N_eff < 2 / 3 * pf.get_particle_num():
             logging.info(f'[event {n}] Resampling particles')
-            pf.resample_particles()
+            new_particle_list = pf.resample_particles()
+            particle_index_pair_list = [(idx, particle) for idx, particle in enumerate(new_particle_list)]
