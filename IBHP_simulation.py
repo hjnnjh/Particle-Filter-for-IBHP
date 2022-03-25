@@ -9,6 +9,7 @@
 @Desc    :   None
 """
 import logging
+from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -118,7 +119,7 @@ class IBHP:
         self.v = self.v.numpy().T
 
         # sample t_1
-        self.generate_timestamp(1)
+        self.generate_timestamp_by_thinning(1)
         logging.info(f'Timestamp when n=1：{self.timestamp_array}')
 
         # sample T_1
@@ -129,7 +130,8 @@ class IBHP:
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
         assert isinstance(self.lambda_k_array, np.ndarray)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
+        c_n = np.argwhere(self.c[-1] != 0)[:, 0]
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array[c_n])])
         logging.info(f'lambda tn array when n=1：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(1)
@@ -181,7 +183,7 @@ class IBHP:
         logging.info(f'kappa_n when n={n}：{self.kappa_n}')
 
         # sample t_n
-        self.generate_timestamp(n)
+        self.generate_timestamp_by_thinning(n)
         logging.info(f'Timestamp when n={n}：{self.timestamp_array}')
 
         # sample T_n
@@ -194,9 +196,9 @@ class IBHP:
         self.calculate_lambda_k(n)
 
         # calculate lambda(t_n)
-        kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
+        c_n = np.argwhere(self.c[-1] != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
+                                         np.sum(self.lambda_k_array[c_n]))
         logging.info(f'lambda tn array when n={n}：{self.lambda_tn_array}\n')
 
         self.collect_factor_intensity(n)
@@ -210,7 +212,7 @@ class IBHP:
         elif n >= 2:
             FLAG = 'notpass'
             # update maximum intensity
-            nonzero_index_kappa_last = np.argwhere(self.kappa_n != 0)[:, 0]  # event(n-1)
+            nonzero_index_kappa_last = np.argwhere(self.c[-1] != 0)[:, 0]  # event index of the last sample
             # Y = np.sum(self.w[:, nonzero_index_kappa_last].T @ self.beta) / np.count_nonzero(self.c[n - 1])
             Y = np.sum(self.w.T @ self.beta) / np.count_nonzero(self.c[n - 1])
             lambda_star = self.lambda_tn_array[-1] + Y
@@ -237,6 +239,43 @@ class IBHP:
                 else:
                     lambda_star = lambda_s
 
+    def generate_timestamp_by_thinning(self, n: int):
+        FLAG = None
+        while not FLAG:
+            if n == 1:
+                lambda_star = self.lambda0
+                u = np.random.uniform(0, 1)
+                candidate_next_timestamp = - (1 / lambda_star) * np.log(u)
+                candidate_timestamp_array = np.array([candidate_next_timestamp])
+            else:
+                lambda_star = self.lambda_tn_array[-1]  # upper bound of Poisson intensity
+                u = np.random.uniform(0, 1)
+                time_interval = - (1 / lambda_star) * np.log(u)
+                candidate_next_timestamp = self.timestamp_array[-1] + time_interval
+                candidate_timestamp_array = deepcopy(self.timestamp_array)
+                candidate_timestamp_array = np.append(candidate_timestamp_array, candidate_next_timestamp)
+
+            # calculate lambda_(candidate_next_timestamp)
+            delta_t = candidate_timestamp_array[-1] - candidate_timestamp_array
+            kernel = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
+            base_kernel_mat = kernel(delta_t, self.beta, self.tau).T  # (t, l)
+            kappa_t = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[: delta_t.shape[0]]
+            kappa_t_count = np.count_nonzero(self.c[: delta_t.shape[0]], axis=1).reshape(-1, 1)
+            lambda_k_array = np.sum(kappa_t / kappa_t_count, axis=0)
+            c_t = np.argwhere(self.c[-1] != 0)[:, 0]
+            lambda_t = np.sum(lambda_k_array[c_t])
+
+            # rejection test
+            s = np.random.uniform(0, 1)
+            if s <= lambda_t / lambda_star:
+                if n == 1:
+                    self.timestamp_array = np.array([candidate_next_timestamp])
+                else:
+                    self.timestamp_array = np.append(self.timestamp_array, candidate_next_timestamp)
+                FLAG = 'PASS'
+            else:
+                continue
+
     def generate_data(self):
         self.generate_first_event()
         for i in np.arange(1, self.n_sample):
@@ -244,10 +283,11 @@ class IBHP:
 
     def plot_intensity_function(self):
         fig, ax = plt.subplots(dpi=500)
-        x = np.arange(self.lambda_tn_array.shape[0])
-        ax.plot(x, self.lambda_tn_array)
-        ax.set_xlabel('n')
+        ax.plot(self.timestamp_array, self.lambda_tn_array)
+        ax.set_xlabel('time')
         ax.set_ylabel(r'$\lambda(t_n)$')
+        ax.set_xticks(self.timestamp_array)
+        ax.set_xticklabels([])
         plt.show()
 
     def collect_factor_intensity(self, n):
@@ -288,10 +328,11 @@ class IBHP:
         ax = ax.flatten()
         for idx, col in enumerate(factor_index):
             lambda_k_column = self.lambda_k_array_mat[:, col]
-            x = np.arange(lambda_k_column.shape[0])
-            ax[idx].plot(x, lambda_k_column, color='b')
-            ax[idx].set_xlabel('n')
-            ax[idx].set_ylabel(fr'$\lambda_{col + 1}(t)$')
+            ax[idx].plot(self.timestamp_array, lambda_k_column, color='b')
+            ax[idx].set_xlabel('time')
+            ax[idx].set_xticks(self.timestamp_array)
+            ax[idx].set_xticklabels([])
+            ax[idx].set_ylabel(fr'$\lambda_{{{col + 1}}}(t)$')
             ax[idx].set_title(f'Topic {col + 1}')
         fig.tight_layout()
         plt.show()
