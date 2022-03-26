@@ -10,7 +10,6 @@
 """
 import logging
 import os.path
-import time
 from collections import Counter
 from copy import deepcopy
 from functools import partial
@@ -54,24 +53,10 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     return word_corpus_mat
 
 
-# ---------------------------- simulation data ----------------------------
-# noinspection SpellCheckingInspection
-n_sample = 200
-n_particle = 20
+# ------------------------------ generate simulation data ------------------------------
 
-if not os.path.exists('./img'):
-    os.mkdir('./img')
-
-
-# save the model result
-if not os.path.exists('./model-result'):
-    os.mkdir('./model-result')
-# clean old model result
-else:
-    os.system('rm -r ./model-result/*')
-
-logging.info(f'set n_sample to {n_sample}')
-logging.info(f'set n_particle to {n_particle}')
+n_sample = 1000
+n_particle = 100
 
 # noinspection SpellCheckingInspection
 ibhp = IBHP(n_sample)
@@ -83,12 +68,8 @@ logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
 word_dict = np.arange(1000)
 logging.info(f'Dictionary: {word_dict}\n')
 
-# save true value
-np.save('./model-result/true_intensity_array.npy', true_intensity_array)
-np.save('./model-result/time_stamp_array.npy', ibhp.timestamp_array)
-np.save('./model-result/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
-np.save('./model-result/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
 
+# ------------------------------ main class ------------------------------
 
 # noinspection PyMissingConstructor,DuplicatedCode,PyPep8Naming,PyShadowingNames
 class Particle(IBHP):
@@ -145,15 +126,18 @@ class Particle(IBHP):
             kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
             self.lambda_k_array = np.sum(np.divide(kappa_history, kappa_history_count), axis=0)
 
-    def sample_first_particle_event_status(self):
+    def sample_first_particle_event_status(self, parameter_fixed: bool = False):
         """
         Generate the particle state corresponding to the first Event
         :return:
         """
         # Initialize lambda0, beta, tau
-        self.lambda0 = 1
-        self.beta = np.array([1, 1, 1])  # array, shape=(L, )
-        self.tau = np.array([0.1, 0.1, 0.1])  # array, shape=(L, )
+        if parameter_fixed:
+            pass
+        else:
+            self.lambda0 = 2
+            self.beta = np.array([1, 2, 3])  # array, shape=(L, )
+            self.tau = np.array([0.3, 0.2, 0.1])  # array, shape=(L, )
 
         self.w_0 = np.array([1 / self.L] * self.L)  # array, shape=(L, )
         self.v_0 = np.array([1 / self.S] * self.S)  # array, shape(S, )
@@ -200,7 +184,7 @@ class Particle(IBHP):
 
         # calculate lambda_1
         self.calculate_lambda_k(n=1)
-        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array) + self.lambda0])
+        self.lambda_tn_array = np.array([np.sum(self.lambda_k_array)])
 
         self.collect_factor_intensity(n=1)
 
@@ -281,9 +265,9 @@ class Particle(IBHP):
 
         # calculate lambda_tn
         self.calculate_lambda_k(n=n)
-        kappa_n_nonzero_index = np.argwhere(self.kappa_n != 0)[:, 0]
+        kappa_n_nonzero_index = np.argwhere(self.c[-1] != 0)[:, 0]
         self.lambda_tn_array = np.append(self.lambda_tn_array,
-                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]) + self.lambda0)
+                                         np.sum(self.lambda_k_array[kappa_n_nonzero_index]))
         self.collect_factor_intensity(n=n)
 
     # noinspection SpellCheckingInspection
@@ -855,6 +839,9 @@ class Particle(IBHP):
         if hasattr(self, 'FLAG'):
             print(f'Fixed particle\'s log_likelihood_timestamp: {log_likelihood_timestamp}')
             print(f'Fixed particle\'s log_likelihood_text: {log_likelihood_text}\n')
+        elif hasattr(self, 'Parameter_FLAG'):
+            print(f'Parameter Fixed particle\'s log_likelihood_timestamp: {log_likelihood_timestamp}')
+            print(f'Parameter Fixed particle\'s log_likelihood_text: {log_likelihood_text}\n')
         else:
             print(f'log_likelihood_timestamp: {log_likelihood_timestamp}')
             print(f'log_likelihood_text: {log_likelihood_text}\n')
@@ -880,6 +867,24 @@ class Fixed_Particle(Particle):
         self.v = ibhp.v
         self.c = ibhp.c
         self.FLAG = 'Fixed'
+
+
+class Parameter_Fixed_Particle(Particle):
+
+    def __init__(self):
+        """
+        fix w, v, hyperparameter of the particles
+        """
+        super(Parameter_Fixed_Particle, self).__init__(T_array=ibhp.text, timestamp_array=ibhp.timestamp_array,
+                                                       word_dict=word_dict,
+                                                       fix_params=True,
+                                                       simulation_v=ibhp.v,
+                                                       simulation_w=ibhp.w)
+        self.n_sample = ibhp.n_sample
+        self.lambda0 = ibhp.lambda0
+        self.beta = ibhp.beta
+        self.tau = ibhp.tau
+        self.Parameter_FLAG = 'Fixed'
 
 
 # noinspection PyPep8Naming,SpellCheckingInspection,PyShadowingNames,DuplicatedCode
@@ -911,7 +916,8 @@ class Filtering:
         #                                simulation_v=simulation_v,
         #                                L=L, fix_params=True) for
         #                       i in np.arange(n_particle)]
-        self.particle_list = [Fixed_Particle() for i in np.arange(n_particle)]  # this is used in fixed particle
+        # self.particle_list = [Fixed_Particle() for i in np.arange(n_particle)]  # this is used in fixed particle
+        self.particle_list = [Parameter_Fixed_Particle() for i in np.arange(n_particle)]  # Parameter_Fixed_Particle
         # fixed_paritcle = Fixed_Particle()  # this is used in fixed particle
         # self.particle_list.append(fixed_paritcle)  # add a fixed particle to particle list, used in fixed particle
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
@@ -984,7 +990,15 @@ class Filtering:
             particle.update_hyperparameter(n=1, method='average')
             logging.info(f'[event 1, paricle {particle_idx + 1}] Fixed Particle HP likelihood: '
                          f'{particle.log_hawkes_likelihood(n=1, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)}')
-            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight')
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating Fixed particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
+            return particle_idx, particle
+        elif hasattr(particle, 'Parameter_FLAG'):
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Sampling Parameter Fixed particle status')
+            particle.sample_first_particle_event_status(parameter_fixed=True)
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Parameter Fixed Particle HP likelihood: '
+                         f'{particle.log_hawkes_likelihood(n=1, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)}')
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Updating Parameter Fixed particle weight')
             particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
             return particle_idx, particle
         else:
@@ -1015,6 +1029,14 @@ class Filtering:
                          f'{particle.log_hawkes_likelihood(n=n, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)}')
             logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight')
             particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=n)
+            return particle_idx, particle
+        elif hasattr(particle, 'Parameter_FLAG'):
+            logging.info(f'[event {n}, paricle {particle_idx + 1}] Sampling Parameter Fixed particle status')
+            particle.sample_particle_following_event_status(n)
+            logging.info(f'[event {n}, paricle {particle_idx + 1}] Parameter Fixed Particle HP likelihood: '
+                         f'{particle.log_hawkes_likelihood(n=n, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)}')
+            logging.info(f'[event {n}, paricle {particle_idx + 1}] Updating Parameter Fixed particle weight')
+            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
             return particle_idx, particle
         else:
             logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status')
@@ -1093,6 +1115,24 @@ def plot_parameters(true_lambda_0, true_beta: np.ndarray, true_tau: np.ndarray, 
 
 
 if __name__ == '__main__':
+    # ---------------------------- save simulation data ----------------------------
+    # noinspection SpellCheckingInspection
+    if not os.path.exists('./img'):
+        os.mkdir('./img')
+
+    # save the model result
+    if not os.path.exists('./model-result-fix-hyperparams'):
+        os.mkdir('./model-result-fix-hyperparams')
+    # clean old model result
+    else:
+        os.system('rm -r ./model-result-fix-hyperparams/*')
+
+    # save true value
+    np.save('./model-result-fix-hyperparams/true_intensity_array.npy', true_intensity_array)
+    np.save('./model-result-fix-hyperparams/time_stamp_array.npy', ibhp.timestamp_array)
+    np.save('./model-result-fix-hyperparams/text_array.npy', transfer_multi_dist_result_to_vec(ibhp.text))
+    np.save('./model-result-fix-hyperparams/lambda_k_mat.npy', ibhp.lambda_k_array_mat)
+
     # -------------------------------- filtering --------------------------------
     # noinspection PyBroadException,SpellCheckingInspection
     logging.info(f'\n{"-" * 40}  Start particle filter parameter estimation {"-" * 40}\n')
@@ -1145,19 +1185,19 @@ if __name__ == '__main__':
     # noinspection DuplicatedCode
     # save result
     # params
-    np.save('./model-result/pred_lambda_0.npy', pred_lambda0_array)
-    np.save('./model-result/pred_beta.npy', pred_beta_array)
-    np.save('./model-result/pred_tau.npy', pred_tau_array)
+    np.save('./model-result-fix-hyperparams/pred_lambda_0.npy', pred_lambda0_array)
+    np.save('./model-result-fix-hyperparams/pred_beta.npy', pred_beta_array)
+    np.save('./model-result-fix-hyperparams/pred_tau.npy', pred_tau_array)
 
     # particle weight
-    np.save('./model-result/particle_weight.npy', pf.get_partcie_weight_arr())
+    np.save('./model-result-fix-hyperparams/particle_weight.npy', pf.get_partcie_weight_arr())
 
     # hidden variables in specific particle
     for idx, particle in particle_index_pair_list:
-        if not os.path.exists(f'./model-result/particle-{idx}'):
-            os.mkdir(f'./model-result/particle-{idx}')
-        np.save(f'./model-result/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
-        np.save(f'./model-result/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
+        if not os.path.exists(f'./model-result-fix-hyperparams/particle-{idx}'):
+            os.mkdir(f'./model-result-fix-hyperparams/particle-{idx}')
+        np.save(f'./model-result-fix-hyperparams/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
+        np.save(f'./model-result-fix-hyperparams/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
 
     # resampling
     N_eff = 1 / np.sum(np.square(pf.get_partcie_weight_arr()))
@@ -1213,19 +1253,19 @@ if __name__ == '__main__':
 
         # save result
         # params
-        np.save('./model-result/pred_lambda_0.npy', pred_lambda0_array)
-        np.save('./model-result/pred_beta.npy', pred_beta_array)
-        np.save('./model-result/pred_tau.npy', pred_tau_array)
+        np.save('./model-result-fix-hyperparams/pred_lambda_0.npy', pred_lambda0_array)
+        np.save('./model-result-fix-hyperparams/pred_beta.npy', pred_beta_array)
+        np.save('./model-result-fix-hyperparams/pred_tau.npy', pred_tau_array)
 
         # particle weight
-        np.save('./model-result/particle_weight.npy', pf.get_partcie_weight_arr())
+        np.save('./model-result-fix-hyperparams/particle_weight.npy', pf.get_partcie_weight_arr())
 
         # hidden variables in specific particle
         for idx, particle in particle_index_pair_list:
-            if not os.path.exists(f'./model-result/particle-{idx}'):
-                os.mkdir(f'./model-result/particle-{idx}')
-            np.save(f'./model-result/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
-            np.save(f'./model-result/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
+            if not os.path.exists(f'./model-result-fix-hyperparams/particle-{idx}'):
+                os.mkdir(f'./model-result-fix-hyperparams/particle-{idx}')
+            np.save(f'./model-result-fix-hyperparams/particle-{idx}/pred_lambda_tn.npy', particle.lambda_tn_array)
+            np.save(f'./model-result-fix-hyperparams/particle-{idx}/pred_lambda_k_mat.npy', particle.lambda_k_array_mat)
 
         if n == n_sample:
             break
