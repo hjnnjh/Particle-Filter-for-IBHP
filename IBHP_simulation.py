@@ -14,9 +14,9 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 import numpy as np
 import pyro
+import pyro.distributions as dist
 import torch
 from matplotlib import rcParams
-import pyro.distributions as dist
 
 
 # noinspection SpellCheckingInspection,PyPep8Naming,DuplicatedCode
@@ -45,7 +45,6 @@ class IBHP:
         self.c = None  # topic vector
         self.timestamp_array = None  # Timestamp for each sample
         self.kappa_n = None  # factor kernel vec
-        self.gamma = None  # base kernel vec
         self.text = None  # sample text vector
         self.K = None  # Number of topics
         self.lambda0 = None  # base rate
@@ -144,16 +143,14 @@ class IBHP:
         # Generate c with K topics
         generate_old_c = np.vectorize(self.generate_c)
         c_old = generate_old_c(p)
-        while np.all(c_old == 0):
-            logging.info(f'When n={n}, the occurrence of the topic is all 0, re-sampling')
-            c_old = generate_old_c(p)
-
         # sample K+
         K_plus = np.random.poisson(self.lambda0 / (self.lambda0 + np.sum(self.lambda_k_array)), 1)[0]
-
+        if K_plus == 0:
+            while np.all(c_old == 0):
+                logging.info(f'When n={n}, the occurrence of the topic is all 0, resampling status')
+                c_old = generate_old_c(p)
         # update K
         self.K = self.K + K_plus
-
         # generate new c vec if K_plus > 0
         if K_plus:
             c_new = np.ones(K_plus)
@@ -304,6 +301,7 @@ class IBHP:
                 self.lambda_k_array_mat = np.hstack((self.lambda_k_array_mat,
                                                      np.zeros((self.lambda_k_array_mat.shape[0], zero_num))))
             self.lambda_k_array_mat = np.vstack((self.lambda_k_array_mat, self.lambda_k_array))
+            print(f'event {n}: lambda k shape: {self.lambda_k_array_mat.shape}')
 
     def plot_each_factor_intensity(self, factor_num):
         """
