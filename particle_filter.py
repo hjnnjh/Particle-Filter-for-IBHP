@@ -12,12 +12,10 @@ import logging
 import os.path
 from collections import Counter
 from copy import deepcopy
-from functools import partial
-from multiprocessing import Pool, cpu_count
 from datetime import datetime
+from functools import partial
 from typing import List, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pyro
 import pyro.distributions as dist
@@ -56,7 +54,7 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
 
 # ------------------------------ generate simulation data ------------------------------
 
-n_sample = 1000
+n_sample = 200
 n_particle = 10
 
 # noinspection SpellCheckingInspection
@@ -153,9 +151,9 @@ class Particle(IBHP):
         if parameter_fixed:
             pass
         else:
-            self.lambda0 = 2
-            self.beta = np.array([1, 2, 3])  # array, shape=(L, )
-            self.tau = np.array([0.3, 0.2, 0.1])  # array, shape=(L, )
+            self.lambda0 = 1.5
+            self.beta = np.array([1, 1, 1])  # array, shape=(L, )
+            self.tau = np.array([0.1, 0.1, 0.1])  # array, shape=(L, )
 
         self.K = 0
         self.w_0 = np.array([1 / self.L] * self.L)  # array, shape=(L, )
@@ -194,8 +192,6 @@ class Particle(IBHP):
             with pyro.plate('vk_1', self.K):
                 self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
             self.v = self.v.numpy().T  # matrix, shape=(S, K), Each column is a distribution of words for each k
-        # calculate kappa_n
-        self.kappa_n = self.w.T @ self.beta
         # calculate lambda_1
         self.calculate_lambda_k(1)
         c_n = np.argwhere(self.c[-1] != 0)[:, 0]
@@ -261,13 +257,8 @@ class Particle(IBHP):
                     v_new = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
                 v_new = v_new.numpy().T
                 self.v = np.hstack((self.v, v_new))
-            # If K+ is greater than 0, calculate a new kappa_n
-            new_kappa = w_new.T @ self.beta
-            self.kappa_n = self.w[:, : c_old.shape[0]].T @ self.beta * c_old
-            self.kappa_n = np.hstack((self.kappa_n, new_kappa))
         else:
             self.c = np.vstack((self.c, c_old))
-            self.kappa_n = self.w.T @ self.beta * c_old
         # calculate lambda_tn
         self.calculate_lambda_k(n)
         c_n = np.argwhere(self.c[-1] != 0)[:, 0]
@@ -357,25 +348,24 @@ class Particle(IBHP):
 
     # ----------------------------------- Metropolis Hastings Algorithm -----------------------------------
 
-    def update_lambda0(self, n: int, n_mh: int, beta, tau, old_lambda0=None):
+    def update_lambda0(self, n: int, n_mh: int, beta, tau, lambda0, parameter_a=3):
         """
         update lambda0 using Metropolis-Hastings Algorithm
-        :param old_lambda0:
+        :param parameter_a:
+        :param lambda0:
         :param tau: updated tau
         :param beta: update beta
         :param n: The current sample order, which must be greater than or equal to 1
         :param n_mh: The current nth sample of mh algorithm
         :return:
         """
-        if n_mh == 1:
-            lambda0_old = self.lambda0
-        else:
-            lambda0_old = old_lambda0
+        lambda0_old = lambda0
         lambda0_candidate = sta.gamma.rvs(
-            a=lambda0_old)  # draw candidate lambda0 from proposal distribution(related to previous lambda0)
-        lambda0_old_prior = sta.gamma.pdf(x=lambda0_old, a=3)  # probability of lambda0_old proposal distribution
+            a=parameter_a, scale=lambda0_old)  # draw candidate lambda0 from a parameter-specified distribution
+        lambda0_old_prior = sta.gamma.pdf(x=lambda0_old, a=parameter_a,
+                                          scale=parameter_a / 2)  # probability of lambda0_old prior distribution
         lambda0_candidate_prior = sta.gamma.pdf(x=lambda0_candidate,
-                                                a=3)  # probability of lambda0_candidate proposal distribution
+                                                a=parameter_a, scale=parameter_a / 2)  # probability of lambda0_candidate prior distribution
 
         # likelihood
         log_hawkes_likelihood_lambda0_old = self.log_hawkes_likelihood(n=n, lambda0=lambda0_old,
@@ -384,8 +374,8 @@ class Particle(IBHP):
                                                                              beta=beta, tau=tau)
 
         # probability of proposal distribution
-        lambda0_candidate_proposal = sta.gamma.pdf(x=lambda0_old, a=lambda0_candidate)
-        lambda0_old_proposal = sta.gamma.pdf(x=lambda0_candidate, a=lambda0_old)
+        lambda0_candidate_proposal = sta.gamma.pdf(x=lambda0_old, a=parameter_a, scale=lambda0_candidate)
+        lambda0_old_proposal = sta.gamma.pdf(x=lambda0_candidate, a=parameter_a, scale=lambda0_old)
 
         log_accept_ratio = np.log(lambda0_candidate_prior) + log_hawkes_likelihood_lambda0_candidate + np.log(
             lambda0_candidate_proposal) - np.log(lambda0_old_prior) - log_hawkes_likelihood_lambda0_old - np.log(
@@ -396,16 +386,16 @@ class Particle(IBHP):
         else:
             return lambda0_old
 
-    def update_beta(self, n, n_mh, index, lambda0, beta, tau, old_beta_l=None):
+    def update_beta(self, n, n_mh, index, lambda0, beta, tau, parameter_a=2.5):
         """
         update each beta using Metropolis-Hastings Algorithm
+        :param parameter_a:
         :param beta:
         :param tau: updated tau
         :param lambda0: updated lambda0
         :param n: The current sample order, which must be greater than or equal to 1
         :param n_mh: The current nth sample of mh algorithm
         :param index: the index of beta in beta array
-        :param old_beta_l: the index of old beta in beta array
         :return:
         """
 
@@ -417,21 +407,18 @@ class Particle(IBHP):
             :param replace_value:
             :return:
             """
-            beta = deepcopy(input_beta)
-            beta[replace_index] = replace_value
-            return beta
+            output_beta = deepcopy(input_beta)
+            output_beta[replace_index] = replace_value
+            return output_beta
 
-        if n_mh == 1:
-            beta_l_old = self.beta[index]
-        else:
-            beta_l_old = old_beta_l
+        beta_l_old = beta[index]
 
         # candidate rvs
-        beta_l_candidate = sta.gamma.rvs(a=beta_l_old)
+        beta_l_candidate = sta.gamma.rvs(a=parameter_a, scale=beta_l_old)
 
         # prior
-        beta_l_old_prior = sta.gamma.pdf(x=beta_l_old, a=3)
-        beta_l_candidate_prior = sta.gamma.pdf(x=beta_l_candidate, a=3)
+        beta_l_old_prior = sta.gamma.pdf(x=beta_l_old, a=parameter_a, scale=parameter_a / 2)
+        beta_l_candidate_prior = sta.gamma.pdf(x=beta_l_candidate, a=parameter_a, scale=parameter_a / 2)
 
         # likelihood
         beta_old = copy_beta(index, beta_l_old, beta)
@@ -442,8 +429,8 @@ class Particle(IBHP):
                                                                             beta=beta_candidate, tau=tau)
 
         # proposal
-        beta_l_candidate_proposal = sta.gamma.pdf(x=beta_l_old, a=beta_l_candidate)
-        beta_l_old_proposal = sta.gamma.pdf(x=beta_l_candidate, a=beta_l_old)
+        beta_l_candidate_proposal = sta.gamma.pdf(x=beta_l_old, a=parameter_a, scale=beta_l_candidate)
+        beta_l_old_proposal = sta.gamma.pdf(x=beta_l_candidate, a=parameter_a, scale=beta_l_old)
 
         log_accept_ratio = np.log(beta_l_candidate_prior) + log_hawkes_likelihood_beta_l_candidate + np.log(
             beta_l_candidate_proposal) - np.log(beta_l_old_prior) - log_hawkes_likelihood_beta_l_old - np.log(
@@ -455,16 +442,16 @@ class Particle(IBHP):
         else:
             return beta_l_old
 
-    def update_tau(self, n, n_mh, index, lambda0, beta, tau, old_tau_l=None):
+    def update_tau(self, n, n_mh, index, lambda0, beta, tau, parameter_a=1):
         """
         update each tau using Metropolis-Hastings Algorithm
+        :param parameter_a:
         :param tau:
         :param beta:
         :param lambda0:
         :param n: The current sample order, which must be greater than or equal to 1
         :param n_mh: The current nth sample of mh algorithm
         :param index: the index of tau in tau array
-        :param old_tau_l: the index of old tau in tau array
         :return:
         """
 
@@ -476,21 +463,18 @@ class Particle(IBHP):
             :param replace_value:
             :return:
             """
-            tau = deepcopy(input_tau)
-            tau[replace_index] = replace_value
-            return tau
+            output_tau = deepcopy(input_tau)
+            output_tau[replace_index] = replace_value
+            return output_tau
 
-        if n_mh == 1:
-            tau_l_old = self.tau[index]
-        else:
-            tau_l_old = old_tau_l
+        tau_l_old = tau[index]
 
         # candidate rvs
-        tau_l_candidate = sta.gamma.rvs(a=tau_l_old)
+        tau_l_candidate = sta.gamma.rvs(a=parameter_a, scale=tau_l_old)
 
         # prior
-        tau_l_old_prior = sta.gamma.pdf(x=tau_l_old, a=1)
-        tau_l_candidate_prior = sta.gamma.pdf(x=tau_l_candidate, a=1)
+        tau_l_old_prior = sta.gamma.pdf(x=tau_l_old, a=parameter_a, scale=parameter_a / 2)
+        tau_l_candidate_prior = sta.gamma.pdf(x=tau_l_candidate, a=parameter_a, scale=parameter_a / 2)
 
         # likelihood
         tau_old = copy_tau(index, tau_l_old, tau)
@@ -501,8 +485,8 @@ class Particle(IBHP):
                                                                            beta=beta, tau=tau_candidate)
 
         # proposal
-        tau_l_candidate_proposal = sta.gamma.pdf(x=tau_l_old, a=tau_l_candidate)
-        tau_l_old_proposal = sta.gamma.pdf(x=tau_l_candidate, a=tau_l_old)
+        tau_l_candidate_proposal = sta.gamma.pdf(x=tau_l_old, a=parameter_a, scale=tau_l_candidate)
+        tau_l_old_proposal = sta.gamma.pdf(x=tau_l_candidate, a=parameter_a, scale=tau_l_old)
 
         log_accept_ratio = np.log(tau_l_candidate_prior) + log_hawkes_likelihood_tau_l_candidate + np.log(
             tau_l_candidate_proposal) - np.log(tau_l_old_prior) - log_hawkes_likelihood_tau_l_old - np.log(
@@ -533,7 +517,7 @@ class Particle(IBHP):
         for i in mh_iter:
             mh_iter.set_description(f'[event {n}] sampling parameters through MH')
             if i == 0:
-                updated_lambda0 = self.update_lambda0(n=n, n_mh=i + 1, beta=beta, tau=tau)
+                updated_lambda0 = self.update_lambda0(n=n, n_mh=i + 1, lambda0=self.lambda0, beta=beta, tau=tau)
                 updated_lambda0_array = np.array([updated_lambda0])
                 for idx in np.arange(self.L):
                     updated_beta_l = self.update_beta(n=n, n_mh=i + 1, index=idx, lambda0=updated_lambda0, beta=beta,
@@ -546,26 +530,19 @@ class Particle(IBHP):
                     tau[idx] = updated_tau_l
             else:
                 updated_lambda0 = self.update_lambda0(n=n, n_mh=i + 1, beta=beta, tau=tau,
-                                                      old_lambda0=updated_lambda0)
+                                                      lambda0=updated_lambda0)
                 updated_lambda0_array = np.append(updated_lambda0_array, updated_lambda0)
                 for idx in np.arange(self.L):
                     updated_beta_l = self.update_beta(n=n, n_mh=i + 1, index=idx, lambda0=updated_lambda0, beta=beta,
-                                                      tau=tau,
-                                                      old_beta_l=updated_beta_l)
+                                                      tau=tau)
                     updated_beta_list[idx].append(updated_beta_l)
                     beta[idx] = updated_beta_l  # update beta_l after sampling
                     updated_tau_l = self.update_tau(n=n, n_mh=i + 1, index=idx, lambda0=updated_lambda0, beta=beta,
-                                                    tau=tau,
-                                                    old_tau_l=updated_tau_l)
+                                                    tau=tau)
                     updated_tau_list[idx].append(updated_tau_l)
                     tau[idx] = updated_tau_l
-        # choose the group of the parameters which makes the log hawkes likelihood greatest
-        burning = int(n_iter - n_iter / 10)
-        hawkes_func = np.vectorize(partial(self.log_hawkes_likelihood, n), signature='(),(n),(n)->()')
-        candidate_log_likelihood_array = hawkes_func(updated_lambda0_array,
-                                                     np.array(updated_beta_list).T,
-                                                     np.array(updated_tau_list).T)
 
+        burning = int(n_iter - n_iter / 10)
         self.lambda0 = np.average(updated_lambda0_array[burning:])
         self.beta = np.average(np.array(updated_beta_list).T[burning:], axis=0)
         self.tau = np.average(np.array(updated_tau_list).T[burning:], axis=0)
@@ -577,7 +554,7 @@ class Particle(IBHP):
     # ----------------------------------- Randomly sampling from prior -----------------------------------
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameter(self, n, random_N: int = 50000, cartesian_N: int = 25, method: str = 'maximum'):
+    def update_hyperparameter(self, n, random_N: int = 50000, cartesian_N: int = 25, method: str = 'average'):
         """
         update lambda0, beta, tau
         :param random_N: sample numbers for random
@@ -597,12 +574,12 @@ class Particle(IBHP):
         beta_p_prior_mat = sta.gamma.pdf(x=beta_candi_mat, a=3)
 
         # draw candidate tau
-        tau_candi_mat_random = sta.gamma.rvs(a=1, size=(random_N, self.L))
+        tau_candi_mat_random = sta.gamma.rvs(a=1.5, scale=0.15, size=(random_N, self.L))
         # calculate Cartesian product of tau arrays
         tau_candi_mat_cartesian = cartesian((sta.gamma.rvs(a=1, size=cartesian_N),) * self.L)  # (N, L)
         tau_candi_mat = np.vstack((tau_candi_mat_random, tau_candi_mat_cartesian))
         # calculate prior for candidate tau
-        tau_p_prior_mat = sta.gamma.pdf(x=tau_candi_mat, a=1)
+        tau_p_prior_mat = sta.gamma.pdf(x=tau_candi_mat, a=1.5, scale=0.15)
 
         # draw candidate lambda0 from prior
         lambda0_candi_arr = sta.gamma.rvs(a=3, size=random_N + cartesian_N ** self.L)
@@ -873,6 +850,7 @@ class FixedParticle(Particle):
         self.w = ibhp.w
         self.v = ibhp.v
         self.c = ibhp.c
+        self.event_num = n_sample
         self.FLAG = 'Fixed'
 
 
@@ -908,15 +886,15 @@ class Filtering:
         self.n_sample = n_sample
         # self.n_particle = n_particle + 1  # this num is used in fixed particle
         self.n_particle = n_particle
-        # self.particle_list = [Particle(word_dict=word_dict,
-        #                                timestamp_array=ibhp.timestamp_array, T_array=ibhp.text,
-        #                                simulation_w=ibhp.w,
-        #                                simulation_v=ibhp.v,
-        #                                L=ibhp.L, fix_params=True) for
-        #                       i in np.arange(self.n_particle)]
+        self.particle_list = [Particle(word_dict=word_dict,
+                                       timestamp_array=ibhp.timestamp_array, T_array=ibhp.text,
+                                       simulation_w=ibhp.w,
+                                       simulation_v=ibhp.v,
+                                       L=ibhp.L, fix_params=True) for
+                              i in np.arange(self.n_particle)]
         # self.particle_list = [Fixed_Particle() for i in np.arange(n_particle)]  # this is used in fixed particle
-        self.particle_list = [ParameterFixedParticle() for i in
-                              np.arange(self.n_particle)]  # Parameter_Fixed_Particle
+        # self.particle_list = [ParameterFixedParticle() for i in
+        #                       np.arange(self.n_particle)]  # Parameter_Fixed_Particle
         # fixed_paritcle = Fixed_Particle()  # this is used in fixed particle
         # self.particle_list.append(fixed_paritcle)  # add a fixed particle to particle list, used in fixed particle
         self.particle_weight_arr = np.array([1 / self.n_particle] * self.n_particle)
@@ -954,12 +932,12 @@ class Filtering:
             u = np.random.uniform(0, 1)
             nearest_elem_idx = np.argmin(np.abs(u - sorted_particle_weight))
             if u <= sorted_particle_weight[nearest_elem_idx]:
-                print(f'resample following particle less: {sorted_particle_index[nearest_elem_idx]}\n')
+                print(f'resample following particle less: {sorted_particle_index[nearest_elem_idx] + 1}\n')
                 new_particle = self.particle_list[sorted_particle_index[nearest_elem_idx]]
             else:
                 while sorted_particle_weight[nearest_elem_idx] == sorted_particle_weight[nearest_elem_idx + 1]:
                     nearest_elem_idx += 1
-                print(f'resample following particle more: {sorted_particle_index[nearest_elem_idx + 1]}\n')
+                print(f'resample following particle more: {sorted_particle_index[nearest_elem_idx + 1] + 1}\n')
                 new_particle = self.particle_list[sorted_particle_index[nearest_elem_idx + 1]]
 
             # important, if the same particle is sampled, they should be different objects.
@@ -987,7 +965,7 @@ class Filtering:
             logging.info(f'[event 1, paricle {particle_idx + 1}] Sampling Parameter Fixed particle status')
             particle.sample_first_particle_event_status(parameter_fixed=True)
             hp_lh = particle.log_hawkes_likelihood(n=1, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)
-            logging.info(f'[event 1, paricle {particle_idx + 1}] Fixed Particle HP likelihood: {hp_lh}')
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Parameter Fixed Particle HP likelihood: {hp_lh}')
             logging.info(f'[event 1, paricle {particle_idx + 1}] Updating Parameter Fixed particle weight')
             particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
             return particle_idx, particle
@@ -996,10 +974,10 @@ class Filtering:
             particle.sample_first_particle_event_status()
             # Update hyperparameters and triggering kernels
             logging.info(f'[event 1, paricle {particle_idx + 1}] Updating hyperparameters')
-            # particle.update_hyperparameter(n=1, method='average')
+            particle.update_hyperparameter(n=1)
             # Calculate and update the log particle weights
             hp_lh = particle.log_hawkes_likelihood(n=1, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)
-            logging.info(f'[event 1, paricle {particle_idx + 1}] Fixed Particle HP likelihood: {hp_lh}')
+            logging.info(f'[event 1, paricle {particle_idx + 1}] Particle HP likelihood: {hp_lh}')
             logging.info(f'[event 1, paricle {particle_idx + 1}] Updating particle weight')
             particle.update_log_particle_weight(old_particle_weight=self.particle_weight_arr[particle_idx], n=1)
             return particle_idx, particle
@@ -1032,7 +1010,7 @@ class Filtering:
             logging.info(f'[event {n}, particle {particle_idx + 1}] Sampling particle status')
             particle.sample_particle_following_event_status(n)
             logging.info(f'[event {n}, particle {particle_idx + 1}] Updating hyperparameters')
-            # particle.update_hyperparameter(n=n, method='average')
+            particle.update_hyperparameter(n=n)
             hp_lh = particle.log_hawkes_likelihood(n=n, lambda0=particle.lambda0, beta=particle.beta, tau=particle.tau)
             logging.info(f'[event {n}, paricle {particle_idx + 1}] Particle HP likelihood: {hp_lh}')
             logging.info(f'[event {n}, particle {particle_idx + 1}] Updating particle weight')

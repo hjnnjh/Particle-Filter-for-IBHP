@@ -44,7 +44,6 @@ class IBHP:
         self.tau = None  # base kernel initial parameters
         self.c = None  # topic vector
         self.timestamp_array = None  # Timestamp for each sample
-        self.kappa_n = None  # factor kernel vec
         self.text = None  # sample text vector
         self.K = None  # Number of topics
         self.lambda0 = None  # base rate
@@ -108,10 +107,6 @@ class IBHP:
         self.w = self.w.numpy().T
         logging.info(f'w when n=1：{self.w}')
 
-        # calculate factor kernel
-        self.kappa_n = self.w.T @ self.beta
-        logging.info(f'kappa_n when n=1：{self.kappa_n}')
-
         # sample v_k
         with pyro.plate('vk_1', self.K):
             self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
@@ -122,7 +117,7 @@ class IBHP:
         logging.info(f'Timestamp when n=1：{self.timestamp_array}')
 
         # sample T_1
-        multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / np.count_nonzero(
+        multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.c[-1] != 0)[:, 0]]) / np.count_nonzero(
             self.c[0])
         self.text = np.random.multinomial(self.D, multi_dist_prob, size=1)
 
@@ -167,24 +162,17 @@ class IBHP:
                 new_v = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
             new_v = new_v.numpy().T
             self.v = np.hstack((self.v, new_v))
-
-            # update kappa vector
-            new_kappa = new_w.T @ self.beta
-            self.kappa_n = self.w[:, : c_old.shape[0]].T @ self.beta * c_old
-            self.kappa_n = np.hstack((self.kappa_n, new_kappa))
         else:
             self.c = np.vstack((self.c, c_old))
-            self.kappa_n = self.w.T @ self.beta * c_old
 
         logging.info(f'The topic appears when n={n}：{self.c}')
-        logging.info(f'kappa_n when n={n}：{self.kappa_n}')
 
         # sample t_n
         self.generate_timestamp_by_thinning(n)
         logging.info(f'Timestamp when n={n}：{self.timestamp_array}')
 
         # sample T_n
-        multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.kappa_n != 0)[:, 0]]) / \
+        multi_dist_prob = np.einsum('ij->i', self.v[:, np.argwhere(self.c[-1] != 0)[:, 0]]) / \
                           np.count_nonzero(self.c[n - 1])
         T_n = np.random.multinomial(self.D, multi_dist_prob, size=1)
         self.text = np.append(self.text, T_n, axis=0)  # Update the matrix that generates the text
@@ -251,7 +239,6 @@ class IBHP:
                 candidate_next_timestamp = self.timestamp_array[-1] + time_interval
                 candidate_timestamp_array = deepcopy(self.timestamp_array)
                 candidate_timestamp_array = np.append(candidate_timestamp_array, candidate_next_timestamp)
-
             # calculate lambda_(candidate_next_timestamp)
             delta_t = candidate_timestamp_array[-1] - candidate_timestamp_array
             kernel = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
@@ -261,7 +248,6 @@ class IBHP:
             lambda_k_array = np.sum(kappa_t / kappa_t_count, axis=0)
             c_t = np.argwhere(self.c[-1] != 0)[:, 0]
             lambda_t = np.sum(lambda_k_array[c_t])
-
             # rejection test
             s = np.random.uniform(0, 1)
             if s <= lambda_t / lambda_star:
@@ -280,8 +266,8 @@ class IBHP:
 
     def plot_intensity_function(self):
         fig, ax = plt.subplots(dpi=500)
-        ax.plot(self.timestamp_array, self.lambda_tn_array)
-        ax.set_xlabel('time')
+        ax.plot(self.timestamp_array, self.lambda_tn_array, color='orange')
+        ax.set_xlabel('event')
         ax.set_ylabel(r'$\lambda(t_n)$')
         ax.set_xticks(self.timestamp_array)
         ax.set_xticklabels([])
