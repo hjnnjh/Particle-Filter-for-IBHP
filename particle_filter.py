@@ -65,7 +65,6 @@ logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
 logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
 logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
 word_dict = np.arange(1000)
-logging.info(f'Dictionary: {word_dict}\n')
 
 
 # ------------------------------ main classes ------------------------------
@@ -153,7 +152,7 @@ class Particle(IBHP):
         else:
             self.lambda0 = 1.5
             self.beta = np.array([1, 1, 1])  # array, shape=(L, )
-            self.tau = np.array([0.1, 0.1, 0.1])  # array, shape=(L, )
+            self.tau = np.array([0.5, 0.4, 0.3])  # array, shape=(L, )
 
         self.K = 0
         self.w_0 = np.array([1 / self.L] * self.L)  # array, shape=(L, )
@@ -279,16 +278,16 @@ class Particle(IBHP):
         :return:
         """
         # ---------------------- intergal term ----------------------
-        divide = np.vectorize(np.divide, signature='(),(l)->(l)')
+        divide_ufunc = np.vectorize(np.divide, signature='(),(l)->(l)')
         if n == 1:
             log_integral_term = - lambda0 * self.timestamp_array[0]
         else:
             sum_term = 0
             for i in np.arange(2, n + 1):
                 integral_delta_ti_1_tj = self.timestamp_array[i - 2] - self.timestamp_array[: i - 1]
-                exp_ti_1_tj = np.exp(- divide(integral_delta_ti_1_tj, tau))
+                exp_ti_1_tj = np.exp(- divide_ufunc(integral_delta_ti_1_tj, tau))
                 integral_delta_ti_tj = self.timestamp_array[i - 1] - self.timestamp_array[: i - 1]
-                exp_ti_tj = np.exp(- divide(integral_delta_ti_tj, tau))
+                exp_ti_tj = np.exp(- divide_ufunc(integral_delta_ti_tj, tau))
                 exp_term = exp_ti_tj - exp_ti_1_tj  # (t, l)
                 exp_term = beta * tau * exp_term
                 exp_term = np.einsum('lk,tl->tk', self.w, exp_term) * self.c[: i - 1]
@@ -319,7 +318,7 @@ class Particle(IBHP):
         log_prod_term = 0
         for i in np.arange(1, n + 1):
             prod_delta_ti_tj = self.timestamp_array[i - 1] - self.timestamp_array[: i]
-            prod_exp_term = np.exp(- divide(prod_delta_ti_tj, tau))
+            prod_exp_term = np.exp(- divide_ufunc(prod_delta_ti_tj, tau))
             prod_exp_term = beta * prod_exp_term
             prod_exp_term = np.einsum('lk,tl->tk', self.w, prod_exp_term) * self.c[: i]
             kappa_j_count_prod = np.count_nonzero(self.c[: i], axis=1).reshape(-1, 1)
@@ -554,7 +553,7 @@ class Particle(IBHP):
     # ----------------------------------- Randomly sampling from prior -----------------------------------
 
     # noinspection PyUnboundLocalVariable,SpellCheckingInspection
-    def update_hyperparameter(self, n, random_N: int = 50000, cartesian_N: int = 25, method: str = 'average'):
+    def update_hyperparameter(self, n, random_N: int = 1000, cartesian_N: int = 25, method: str = 'average'):
         """
         update lambda0, beta, tau
         :param random_N: sample numbers for random
@@ -1021,7 +1020,7 @@ class Filtering:
 if __name__ == '__main__':
     # ---------------------------- save simulation data ----------------------------
     # noinspection SpellCheckingInspection
-    SAVE_FLAG = True
+    SAVE_FLAG = False
     TIME = datetime.strftime(datetime.now(), '%Y_%m_%d_%H_%M_%S')
     SAVE_DIR = f'./model_result/model_result_{TIME}'
 
