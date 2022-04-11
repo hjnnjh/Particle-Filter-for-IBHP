@@ -38,6 +38,7 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     :return:
     """
 
+    # noinspection DuplicatedCode
     def transfer_occurrence_data(idx: list, data: list):
         res = []
         res.extend([[idx[i]] * data[i] for i in range(len(idx))])
@@ -50,21 +51,6 @@ def transfer_multi_dist_result_to_vec(T_array: np.ndarray):
     word_corpus_mat = np.array([transfer_occurrence_data(index_list[i], word_occurrence_list[i])
                                 for i in range(len(index_list))])
     return word_corpus_mat
-
-
-# ------------------------------ generate simulation data ------------------------------
-
-n_sample = 200
-n_particle = 10
-
-# noinspection SpellCheckingInspection
-ibhp = IBHP(n_sample)
-ibhp.generate_data()
-true_intensity_array = ibhp.lambda_tn_array
-logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
-logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
-logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
-word_dict = np.arange(1000)
 
 
 # ------------------------------ main classes ------------------------------
@@ -85,13 +71,14 @@ class Particle(IBHP):
     def __init__(self, word_dict: np.ndarray,
                  timestamp_array: np.ndarray, T_array: np.ndarray,
                  simulation_w: np.ndarray = None, simulation_v: np.ndarray = None, fix_params: bool = False,
-                 L: int = 3):
+                 L: int = 3, random_seed: int = None):
         """
         :param T_array: text vector
         :param L: Number of base kernels
         :param word_dict: dictionary
         """
         super(Particle, self).__init__()
+        self.random_seed = random_seed
         self.fix_params = fix_params
         self.log_particle_weight = None
         self.T_array = T_array
@@ -108,6 +95,9 @@ class Particle(IBHP):
             assert isinstance(self.simulation_v, np.ndarray)
             assert self.simulation_w.shape[1] == self.simulation_v.shape[1]
             self.real_factor_num = self.simulation_w.shape[1]
+        if self.random_seed:
+            np.random.seed(self.random_seed)
+            torch.manual_seed(self.random_seed)
 
     def calculate_lambda_k(self, n):
         """
@@ -295,24 +285,8 @@ class Particle(IBHP):
                 c_i = np.argwhere(self.c[i - 1] != 0)[:, 0]  # nonzero element index for current event
                 sum_j_integral = np.sum((exp_term / kappa_j_count)[:, c_i])
                 sum_term += sum_j_integral
+            print(f'event {n} sum_term: {sum_term}')
             log_integral_term = - lambda0 * self.timestamp_array[0] + sum_term
-
-        # delta_T_array = self.timestamp_array[-1] - self.timestamp_array[: n]  # used to calculate the integral term
-        # # calculate kappa history
-        # kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
-        #
-        # # calculate exp_term in integral term
-        # delta_t_divide_tau = np.vectorize(np.divide, signature='(),(l)->(l)')
-        # exp_term = 1 - np.exp(- delta_t_divide_tau(delta_T_array, tau))  # (T, L)
-        #
-        # multyply_func = np.vectorize(np.multiply)
-        # beta_tau_exp_term = multyply_func(self.beta * self.tau, exp_term)
-        # exp_times_coef_term = np.einsum('lk,tl->tk', self.w, beta_tau_exp_term) * self.c
-        # exp_times_coef_term = exp_times_coef_term / kappa_history_count
-        # # kappa_n_nonzero_index = np.argwhere(self.c[-1] != 0)[:, 0]
-        # integral_term = np.sum(exp_times_coef_term)
-        # # log integral term
-        # log_integral_term = -(lambda0 * self.timestamp_array[-1] + integral_term)
 
         # ---------------------- product term ----------------------
         log_prod_term = 0
@@ -326,22 +300,9 @@ class Particle(IBHP):
             sum_j_prod = np.sum((prod_exp_term / kappa_j_count_prod)[:, c_i])
             log_sum_j_prod = np.log(sum_j_prod)
             log_prod_term += log_sum_j_prod
+        print(f'event {n} log_prod_term: {log_prod_term}')
 
-        # log_prod_term = 0
-        # base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
-        # for j in np.arange(1, n + 1):
-        #     if j == 1:
-        #         log_prod_term += np.log(lambda0)
-        #     else:
-        #         delta_tj_array = self.timestamp_array[j - 1] - self.timestamp_array[: j - 1]
-        #         tj_kernel_mat = base_kernel_for_delta_t_vec(delta_tj_array, beta, tau).T
-        #         kappa_history_j = np.einsum('lk,tl->tk', self.w, tj_kernel_mat) * self.c[: j - 1]
-        #         kappa_history_j_count = np.count_nonzero(self.c[: j - 1], axis=1).reshape(-1, 1)
-        #         # kappa_j_nonzero_index = np.argwhere(self.c[j - 1] != 0)[:, 0]
-        #         lambda_tj = np.sum(kappa_history_j / kappa_history_j_count)
-        #         log_prod_term += np.log(lambda0 + lambda_tj)
-
-        # log hawkes likelihood
+        # ---------------------- log hawkes likelihood ----------------------
         log_hawkes_likelihood = log_integral_term + log_prod_term
         return log_hawkes_likelihood
 
@@ -834,39 +795,37 @@ class Particle(IBHP):
         self.log_particle_weight = np.log(old_particle_weight) + log_likelihood_timestamp + log_likelihood_text
 
 
-# noinspection PyPep8Naming,PyShadowingNames
-class FixedParticle(Particle):
+# noinspection PyPep8Naming,PyShadowingNames,SpellCheckingInspection
+class StatusFixedParticle(Particle):
 
-    def __init__(self):
+    def __init__(self, ibhp_instance, word_corpus, n_sample):
         """
         fix the parameters of this particle using the parameters that generated the simulation data
         """
-        super(FixedParticle, self).__init__(T_array=ibhp.text, timestamp_array=ibhp.timestamp_array,
-                                            word_dict=word_dict)
-        self.lambda0 = ibhp.lambda0
-        self.beta = ibhp.beta
-        self.tau = ibhp.tau
-        self.w = ibhp.w
-        self.v = ibhp.v
-        self.c = ibhp.c
+        super(StatusFixedParticle, self).__init__(T_array=ibhp_instance.text, timestamp_array=ibhp_instance.timestamp_array,
+                                                  word_dict=word_corpus)
+        self.w = ibhp_instance.w
+        self.v = ibhp_instance.v
+        self.c = ibhp_instance.c
         self.event_num = n_sample
         self.FLAG = 'Fixed'
 
 
+# noinspection SpellCheckingInspection
 class ParameterFixedParticle(Particle):
 
-    def __init__(self):
+    def __init__(self, ibhp_instance: IBHP, word_corpus):
         """
         fix w, v, hyperparameter of the particles
         """
-        super(ParameterFixedParticle, self).__init__(T_array=ibhp.text, timestamp_array=ibhp.timestamp_array,
-                                                     word_dict=word_dict,
+        super(ParameterFixedParticle, self).__init__(T_array=ibhp_instance.text, timestamp_array=ibhp_instance.timestamp_array,
+                                                     word_dict=word_corpus,
                                                      fix_params=True,
-                                                     simulation_v=ibhp.v,
-                                                     simulation_w=ibhp.w)
-        self.lambda0 = ibhp.lambda0
-        self.beta = ibhp.beta
-        self.tau = ibhp.tau
+                                                     simulation_v=ibhp_instance.v,
+                                                     simulation_w=ibhp_instance.w)
+        self.lambda0 = ibhp_instance.lambda0
+        self.beta = ibhp_instance.beta
+        self.tau = ibhp_instance.tau
         self.Parameter_FLAG = 'Fixed'
 
 
@@ -1018,6 +977,19 @@ class Filtering:
 
 
 if __name__ == '__main__':
+    # ------------------------------ generate simulation data ------------------------------
+
+    n_sample = 200
+    n_particle = 10
+    # noinspection SpellCheckingInspection
+    ibhp = IBHP(n_sample=n_sample, random_seed=10)
+    ibhp.generate_data()
+    true_intensity_array = ibhp.lambda_tn_array
+    logging.info(f'\n{"-" * 40} Observational data generated {"-" * 40}\n')
+    logging.info(f'Timestamp: {ibhp.timestamp_array}\n')
+    logging.info(f'Text: {transfer_multi_dist_result_to_vec(ibhp.text)}\n')
+    word_dict = np.arange(1000)
+
     # ---------------------------- save simulation data ----------------------------
     # noinspection SpellCheckingInspection
     SAVE_FLAG = False

@@ -28,7 +28,7 @@ class IBHP:
     rcParams['font.family'] = 'serif'
     rcParams['font.serif'] = 'Times New Roman'
 
-    def __init__(self, n_sample=100):
+    def __init__(self, n_sample=100, random_seed=None):
         # params for generating data
         self.lambda_k_array_mat = None
         self.n_sample = n_sample
@@ -49,6 +49,10 @@ class IBHP:
         self.lambda0 = None  # base rate
         self.lambda_tn_array = None  # rate array
         self.s = None
+        if random_seed:
+            self.seed = random_seed
+            np.random.seed(self.seed)
+            torch.manual_seed(self.seed)
 
     @staticmethod
     def base_kernel_l(delta, beta, tao):
@@ -76,6 +80,7 @@ class IBHP:
 
             base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
             base_kernel_mat = base_kernel_for_delta_t_vec(delta_t_array, self.beta, self.tau).T  # t_i for each row
+            print(f'kernel mat: {base_kernel_mat}')
             kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c
             kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
             self.lambda_k_array = np.sum(np.divide(kappa_history, kappa_history_count), axis=0)
@@ -324,8 +329,8 @@ class IBHP:
 
 if __name__ == '__main__':
     # noinspection SpellCheckingInspection
-    ibhp_ins = IBHP(n_sample=200)
+    ibhp_ins = IBHP(n_sample=10, random_seed=10)
     ibhp_ins.generate_data()
     ibhp_ins.plot_intensity_function()
-    ibhp_ins.plot_each_factor_intensity(factor_num=9)
+    # ibhp_ins.plot_each_factor_intensity(factor_num=9)
     print(ibhp_ins.text)
