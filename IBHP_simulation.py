@@ -32,9 +32,9 @@ class IBHP:
         # params for generating data
         self.lambda_k_array_mat = None
         self.n_sample = n_sample
-        self.L = None  # the number of base kernels
+        self.sum_kernel_num = None  # the number of base kernels
         self.D = None  # length of each document
-        self.S = None  # The total number of words in the dictionary (replace with the index of each word below)
+        self.word_num = None  # The total number of words in the dictionary (replace with the index of each word below)
         self.w_0 = None  # The topic distribution (dirichlet) parameter of the document
         self.w = None  # The weight of the base kernel
         self.v_0 = None  # topic word distribution (dirichlet) parameter
@@ -80,22 +80,21 @@ class IBHP:
 
             base_kernel_for_delta_t_vec = np.vectorize(self.base_kernel_l, signature='(n),(),()->(n)')
             base_kernel_mat = base_kernel_for_delta_t_vec(delta_t_array, self.beta, self.tau).T  # t_i for each row
-            print(f'kernel mat: {base_kernel_mat}')
             kappa_history = np.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c
             kappa_history_count = np.count_nonzero(self.c, axis=1).reshape(-1, 1)
             self.lambda_k_array = np.sum(np.divide(kappa_history, kappa_history_count), axis=0)
 
     def generate_first_event(self):
         # parameter initialization
-        self.L = 3  # numbers of base kernel
+        self.sum_kernel_num = 3  # numbers of base kernel
         self.D = 20  # length of each document
-        self.S = 1000  # The total number of words in the dictionary (replace with the index of each word below)
+        self.word_num = 1000  # The total number of words in the dictionary (replace with the index of each word below)
         self.K = 0
         self.lambda0 = 2
         self.tau = np.array([0.3, 0.2, 0.1])  # decaying parameters
         self.beta = np.array([1, 2, 3])  # initial parameters of base kernel
         self.w_0 = np.array([1 / 3, 1 / 3, 1 / 3])  # The weight distribution (dirichlet) parameter of the base kernel
-        self.v_0 = np.array([1 / self.S] * self.S)  # topic word distribution (dirichlet) parameter
+        self.v_0 = np.array([1 / self.word_num] * self.word_num)  # topic word distribution (dirichlet) parameter
 
         # Generate the First Event
         while self.K == 0:
@@ -107,15 +106,15 @@ class IBHP:
         logging.info(f'Topics appeared when n=1: {self.c}')
 
         # sample w_k
-        with pyro.plate('wk_1', self.K):
-            self.w = pyro.sample('w_1', dist.Dirichlet(torch.from_numpy(self.w_0)))
-        self.w = self.w.numpy().T
+        w_0 = torch.from_numpy(self.w_0)
+        self.w = dist.Dirichlet(w_0).sample((self.K,)).T
+        self.w = self.w.numpy()
         logging.info(f'w when n=1：{self.w}')
 
         # sample v_k
-        with pyro.plate('vk_1', self.K):
-            self.v = pyro.sample('v_1', dist.Dirichlet(torch.from_numpy(self.v_0)))
-        self.v = self.v.numpy().T
+        v_0 = torch.from_numpy(self.v_0)
+        self.v = dist.Dirichlet(v_0).sample((self.K,)).T
+        self.v = self.v.numpy()
 
         # sample t_1
         self.generate_timestamp_by_thinning(1)
@@ -158,14 +157,14 @@ class IBHP:
             self.c = np.hstack((self.c, np.zeros((self.c.shape[0], K_plus))))  # Complete the existing c matrix with 0
             self.c = np.vstack((self.c, c))  # Add the c vector of the new sample to the c matrix
 
-            with pyro.plate(f'wk_{n}', K_plus):
-                new_w = pyro.sample(f'new_w_{n}', dist.Dirichlet(torch.from_numpy(self.w_0)))
-            new_w = new_w.numpy().T
+            w_0 = torch.from_numpy(self.w_0)
+            new_w = dist.Dirichlet(w_0).sample((K_plus,)).T
+            new_w = new_w.numpy()
             self.w = np.hstack((self.w, new_w))
 
-            with pyro.plate(f'vk_{n}', K_plus):
-                new_v = pyro.sample(f'new_v_{n}', dist.Dirichlet(torch.from_numpy(self.v_0)))
-            new_v = new_v.numpy().T
+            v_0 = torch.from_numpy(self.v_0)
+            new_v = dist.Dirichlet(v_0).sample((K_plus,)).T
+            new_v = new_v.numpy()
             self.v = np.hstack((self.v, new_v))
         else:
             self.c = np.vstack((self.c, c_old))
@@ -292,7 +291,6 @@ class IBHP:
                 self.lambda_k_array_mat = np.hstack((self.lambda_k_array_mat,
                                                      np.zeros((self.lambda_k_array_mat.shape[0], zero_num))))
             self.lambda_k_array_mat = np.vstack((self.lambda_k_array_mat, self.lambda_k_array))
-            print(f'event {n}: lambda k shape: {self.lambda_k_array_mat.shape}')
 
     def plot_each_factor_intensity(self, factor_num):
         """
@@ -329,8 +327,8 @@ class IBHP:
 
 if __name__ == '__main__':
     # noinspection SpellCheckingInspection
-    ibhp_ins = IBHP(n_sample=10, random_seed=10)
+    ibhp_ins = IBHP(n_sample=100, random_seed=10)
     ibhp_ins.generate_data()
     ibhp_ins.plot_intensity_function()
-    # ibhp_ins.plot_each_factor_intensity(factor_num=9)
-    print(ibhp_ins.text)
+    ibhp_ins.plot_each_factor_intensity(factor_num=9)
+    print(ibhp_ins.v)
