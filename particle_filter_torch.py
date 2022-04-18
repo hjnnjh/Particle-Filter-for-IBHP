@@ -27,7 +27,7 @@ class ParticleFilter:
                  word_corpus: TENSOR, timestamp_tensor: TENSOR, text_tensor: TENSOR, true_lambda_tn: TENSOR,
                  fix_w_v: bool, simulation_w: TENSOR, simulation_v: TENSOR,
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
-                 alpha_lambda0: TENSOR, alpha_beta: TENSOR, alpha_tau: TENSOR, random_num: int,
+                 alpha_lambda0: TENSOR, alpha_beta: TENSOR, alpha_tau: TENSOR, total_num: int,
                  device: torch.device = DEVICE0):
         """
         :param n_particle:
@@ -45,14 +45,14 @@ class ParticleFilter:
         :param alpha_lambda0:
         :param alpha_beta:
         :param alpha_tau:
-        :param random_num:
+        :param total_num:
         :param device:
         """
         self.true_lambda_tn = true_lambda_tn
         self.word_corpus = word_corpus
         self.timestamp_tensor = timestamp_tensor
         self.text_tensor = text_tensor
-        self.random_num = random_num
+        self.total_num = total_num
         self.alpha_tau = alpha_tau
         self.alpha_beta = alpha_beta
         self.alpha_lambda0 = alpha_lambda0
@@ -91,7 +91,7 @@ class ParticleFilter:
 
             logging.info(f'[event {n}, particle {particle.particle_idx}] Updating hyper-parameter')
             particle.update_hyperparameter(n=n, alpha_lambda0=self.alpha_lambda0, alpha_beta=self.alpha_beta,
-                                           alpha_tau=self.alpha_tau, random_num=self.random_num)
+                                           alpha_tau=self.alpha_tau, total_num=self.total_num)
 
             logging.info(f'[event {n}, particle {particle.particle_idx}] Updating particle weight')
             particle.update_log_particle_weight(old_particle_weight=self.particle_weight_tensor[particle.particle_idx],
@@ -189,6 +189,6 @@ if __name__ == '__main__':
         alpha_lambda0=torch.tensor(3.),
         alpha_beta=torch.tensor(3.),
         alpha_tau=torch.tensor(1.5),
-        random_num=5000
+        total_num=10000
     )
     pf.filtering()

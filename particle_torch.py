@@ -72,6 +72,23 @@ class Particle(IBHP):
             torch.manual_seed(self.random_seed)
 
     @staticmethod
+    def split_integer(m, n):
+        """
+        split an integer into N equal parts
+        :param m: integer need to be split
+        :param n: number of parts
+        :return:
+        """
+        assert n > 0
+        quotient = int(m / n)
+        remainder = m % n
+        if remainder > 0:
+            return [quotient] * (n - remainder) + [quotient + 1] * remainder
+        if remainder < 0:
+            return [quotient - 1] * -remainder + [quotient] * (n + remainder)
+        return [quotient] * n
+
+    @staticmethod
     def exp_kernel(delta_t: TENSOR, beta: TENSOR, tau: TENSOR):
         """
         exp kernel
@@ -272,7 +289,7 @@ class Particle(IBHP):
         log_hawkes_likelihood = log_integral_term + log_prod_term
         return log_hawkes_likelihood
 
-    def update_hyperparameter(self, n: int,
+    def sample_hyperparameter(self, n: int,
                               alpha_lambda0: TENSOR,
                               alpha_beta: TENSOR,
                               alpha_tau: TENSOR,
@@ -307,12 +324,71 @@ class Particle(IBHP):
 
         log_weight_tensor = lambda0_candi_prior_log + torch.sum(beta_candi_prior_log, dim=1) + \
                             torch.sum(tau_candi_prior_log, dim=1) + log_hawkes_likelihood_tensor
-        weight_tensor = softmax(log_weight_tensor, 0)
+        return lambda0_candi_tensor, beta_candi_tensor_mat, tau_candi_tensor_mat, log_weight_tensor
+        # weight_tensor = softmax(log_weight_tensor, 0)
 
         # fetch result and update hyperparameter
-        self.lambda0 = weight_tensor @ lambda0_candi_tensor
-        self.beta = weight_tensor @ beta_candi_tensor_mat
-        self.tau = weight_tensor @ tau_candi_tensor_mat
+        # self.lambda0 = weight_tensor @ lambda0_candi_tensor
+        # self.beta = weight_tensor @ beta_candi_tensor_mat
+        # self.tau = weight_tensor @ tau_candi_tensor_mat
+
+    def update_hyperparameter(self, n,
+                              alpha_lambda0: TENSOR,
+                              alpha_beta: TENSOR,
+                              alpha_tau: TENSOR,
+                              total_num: int = 10000):
+        """
+        using adaptive batch size method to update model hyperparameter
+        :param alpha_tau:
+        :param alpha_beta:
+        :param alpha_lambda0:
+        :param n: event
+        :param total_num: total number of hyperparameter samples
+        :return:
+        """
+        lambda0_candi_tensor, beta_candi_tensor_mat, \
+        tau_candi_tensor_mat, log_weight_tensor = None, None, None, None
+        chunk_size = n // 100 + 1  # begin from 1
+        logging.info(f'[event {n}, particle {self.particle_idx}] chunk size: {chunk_size}')
+        if chunk_size == 1:
+            lambda0_candi_tensor, beta_candi_tensor_mat, \
+            tau_candi_tensor_mat, log_weight_tensor = self.sample_hyperparameter(
+                n=n,
+                alpha_lambda0=alpha_lambda0,
+                alpha_beta=alpha_beta,
+                alpha_tau=alpha_tau,
+                random_num=total_num
+            )
+        else:
+            chunk_num_list = self.split_integer(total_num, chunk_size)
+            logging.info(f'[event {n}, particle {self.particle_idx}] chunk list: {chunk_num_list}')
+            for idx, num in enumerate(chunk_num_list):
+                if idx == 0:
+                    lambda0_candi_tensor, beta_candi_tensor_mat, \
+                    tau_candi_tensor_mat, log_weight_tensor = self.sample_hyperparameter(
+                        n=n,
+                        alpha_lambda0=alpha_lambda0,
+                        alpha_beta=alpha_beta,
+                        alpha_tau=alpha_tau,
+                        random_num=num
+                    )
+                else:
+                    each_lambda0_candi_tensor, each_beta_candi_tensor_mat, \
+                    each_tau_candi_tensor_mat, each_log_weight_tensor = self.sample_hyperparameter(
+                        n=n,
+                        alpha_lambda0=alpha_lambda0,
+                        alpha_beta=alpha_beta,
+                        alpha_tau=alpha_tau,
+                        random_num=num
+                    )
+                    lambda0_candi_tensor = torch.hstack((lambda0_candi_tensor, each_lambda0_candi_tensor))
+                    beta_candi_tensor_mat = torch.vstack((beta_candi_tensor_mat, each_beta_candi_tensor_mat))
+                    tau_candi_tensor_mat = torch.vstack((tau_candi_tensor_mat, each_tau_candi_tensor_mat))
+                    log_weight_tensor = torch.hstack((log_weight_tensor, each_log_weight_tensor))
+        normalized_weight_tensor = softmax(log_weight_tensor, 0)
+        self.lambda0 = normalized_weight_tensor @ lambda0_candi_tensor
+        self.beta = normalized_weight_tensor @ beta_candi_tensor_mat
+        self.tau = normalized_weight_tensor @ tau_candi_tensor_mat
 
     def update_log_particle_weight(self, n, old_particle_weight: TENSOR):
         """
