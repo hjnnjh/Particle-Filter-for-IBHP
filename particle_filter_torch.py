@@ -9,6 +9,7 @@
 """
 import logging
 import os
+import sys
 from copy import deepcopy
 from datetime import datetime
 
@@ -169,7 +170,7 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 200
+    n_sample = int(sys.argv[1])
     ibhp = IBHP(n_sample=n_sample, random_seed=10)
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
