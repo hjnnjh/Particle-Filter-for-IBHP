@@ -28,7 +28,7 @@ class ParticleFilter:
                  fix_w_v: bool, simulation_w: TENSOR, simulation_v: TENSOR,
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
                  alpha_lambda0: TENSOR, alpha_beta: TENSOR, alpha_tau: TENSOR, random_num: int,
-                 device_name: torch.device = DEVICE0):
+                 device: torch.device = DEVICE0):
         """
         :param n_particle:
         :param n_sample:
@@ -46,7 +46,7 @@ class ParticleFilter:
         :param alpha_beta:
         :param alpha_tau:
         :param random_num:
-        :param device_name:
+        :param device:
         """
         self.true_lambda_tn = true_lambda_tn
         self.word_corpus = word_corpus
@@ -61,7 +61,7 @@ class ParticleFilter:
         self.lambda0 = lambda0
         self.n_sample = n_sample
         self.n_particle = n_particle
-        self.device = device_name
+        self.device = device
         self.particle_list = [
             Particle(
                 word_corpus=self.word_corpus,
@@ -70,7 +70,8 @@ class ParticleFilter:
                 particle_idx=i,
                 fix_w_v=fix_w_v,
                 simulation_v=simulation_v,
-                simulation_w=simulation_w
+                simulation_w=simulation_w,
+                device=self.device
             )
             for i in range(self.n_particle)]
         self.particle_weight_tensor = torch.tensor([1 / self.n_particle for i in torch.arange(self.n_particle)]).to(
@@ -88,7 +89,7 @@ class ParticleFilter:
             else:
                 particle.sample_particle_following_event_status(n=n)
 
-            logging.info(f'[event {n}, particle {particle.particle_idx}] Updating hyperparameter')
+            logging.info(f'[event {n}, particle {particle.particle_idx}] Updating hyper-parameter')
             particle.update_hyperparameter(n=n, alpha_lambda0=self.alpha_lambda0, alpha_beta=self.alpha_beta,
                                            alpha_tau=self.alpha_tau, random_num=self.random_num)
 
