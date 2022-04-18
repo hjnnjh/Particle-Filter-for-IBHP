@@ -21,7 +21,7 @@ from torch.nn.functional import softmax
 from IBHP_simulation import IBHP
 
 # ------------------------------ global vars ------------------------------
-# when sample hyperparameter, allocate 3 gpu to compute sample likelihood separately
+# when sample hyper-parameters, allocate 3 gpu to compute sample likelihood separately
 DEVICE0 = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
 DEVICE1 = torch.device('cuda:1')
 DEVICE2 = torch.device('cuda:2')
