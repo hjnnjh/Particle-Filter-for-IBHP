@@ -148,6 +148,7 @@ class ParticleFilter:
             torch.save(self.text_tensor, f'{save_dir}/text_tensor.pt')
 
         # begin to execute filtering step
+        avg_lambda0_tensor, avg_beta_tensor, avg_tau_tensor = None, None, None
         for n in torch.arange(1, self.n_sample + 1):
             self._generate_status_for_particles(n=n)
             self._update_particle_weight_tensor()
@@ -159,9 +160,33 @@ class ParticleFilter:
             avg_lambda0 = self.particle_weight_tensor @ lambda0_particles
             avg_beta = self.particle_weight_tensor @ beta_particles
             avg_tau = self.particle_weight_tensor @ tau_particles
+            if n == 1:
+                avg_lambda0_tensor = avg_lambda0.unsqueeze(-1)
+                avg_beta_tensor = avg_beta.clone()
+                avg_tau_tensor = avg_tau.clone()
+            else:
+                avg_lambda0_tensor = torch.hstack([avg_lambda0_tensor, avg_lambda0])
+                avg_beta_tensor = torch.vstack([avg_beta_tensor, avg_beta])
+                avg_tau_tensor = torch.vstack([avg_tau_tensor, avg_tau])
             logging.info(f'[event {n}] lambda0: {avg_lambda0}')
             logging.info(f'[event {n}] beta: {avg_beta}')
             logging.info(f'[event {n}] tau: {avg_tau}')
+            if save_res:
+                torch.save(avg_lambda0_tensor, f'{save_dir}/avg_lambda0_tensor.pt')
+                torch.save(avg_beta_tensor, f'{save_dir}/avg_beta_tensor.pt')
+                torch.save(avg_tau_tensor, f'{save_dir}/avg_tau_tensor.pt')
+                torch.save(self.particle_weight_tensor, f'{save_dir}/particle_weight_tensor.pt')
+                for particle in self.particle_list:
+                    if not os.path.exists(f'{save_dir}/particle-{particle.particle_idx}'):
+                        os.mkdir(f'{save_dir}/particle-{particle.particle_idx}')
+                    torch.save(particle.c, f'{save_dir}/particle-{particle.particle_idx}/c.pt')
+                    torch.save(particle.w, f'{save_dir}/particle-{particle.particle_idx}/w.pt')
+                    torch.save(particle.v, f'{save_dir}/particle-{particle.particle_idx}/v.pt')
+                    torch.save(particle.lambda0_res, f'{save_dir}/particle-{particle.particle_idx}/lambda0.pt')
+                    torch.save(particle.beta_res, f'{save_dir}/particle-{particle.particle_idx}/beta.pt')
+                    torch.save(particle.tau_res, f'{save_dir}/particle-{particle.particle_idx}/tau.pt')
+                    torch.save(particle.lambda_tn_tensor,
+                               f'{save_dir}/particle-{particle.particle_idx}/lambda_tn_tensor.pt')
             # resampling
             n_eff = 1 / torch.sum(torch.square(self.particle_weight_tensor))
             if n_eff < 0.8 * self.n_particle:
@@ -189,6 +214,6 @@ if __name__ == '__main__':
         alpha_lambda0=torch.tensor(3.),
         alpha_beta=torch.tensor(3.),
         alpha_tau=torch.tensor(1.5),
-        random_num=5000
+        random_num=10000
     )
-    pf.filtering()
+    pf.filtering(save_res=True)

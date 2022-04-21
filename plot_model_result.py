@@ -12,15 +12,17 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from particle_filter_torch import TENSOR
 
 
 # noinspection DuplicatedCode
 def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
-    true_intensity = np.load(f'{save_dir}/true_intensity_array.npy')
-    particle_weight = np.load(f'{save_dir}/particle_weight.npy')
-    timestamp_array = np.load(f'{save_dir}/time_stamp_array.npy')
+    true_intensity = torch.load(f'{save_dir}/true_lambda_tn.pt', map_location='cpu').numpy()
+    particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt', map_location='cpu').numpy()
+    timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt', map_location='cpu').numpy()
     pred_intensity_array = np.array(
-        [np.load(f'{save_dir}/{filename}/pred_lambda_tn.npy') for filename in
+        [torch.load(f'{save_dir}/{filename}/lambda_tn_tensor.pt', map_location='cpu').numpy() for filename in
          os.listdir(f'{save_dir}')
          if os.path.isdir(f'{save_dir}/{filename}')])
     fig, ax = plt.subplots(dpi=400)
@@ -33,7 +35,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
                 label='Pred')
         ax.set_xticks(timestamp_array[: average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Fix Particle Hyperparameter, First {first_n} Events Average Intensity',
+        ax.set_title(f'10 Particles, First {first_n} Events Average Intensity',
                      fontsize=10)
     if last_n:
         finished_num = average_pred_intensity_array.shape[0]
@@ -45,7 +47,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
                 label='Pred')
         ax.set_xticks(timestamp_array[: finished_num][-average_pred_intensity_array.shape[0]:])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Fix Particle Hyperparameter, Last {last_n} Events Average Intensity',
+        ax.set_title(f'10 Particles, Last {last_n} Events Average Intensity',
                      fontsize=10)
     if not first_n and not last_n:
         ax.plot(timestamp_array[: average_pred_intensity_array.shape[0]],
@@ -54,13 +56,47 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
                 label='Pred')
         ax.set_xticks(timestamp_array[: average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Fix Particle Hyperparameter, Average Intensity')
+        ax.set_title(f'10 Particles, Average Intensity')
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
     plt.show()
 
 
+def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, true_tau: TENSOR):
+    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()
+    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
+    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
+    event_num = pred_lambda0_array.shape[0]
+    true_lambda0 = true_lambda0.repeat(event_num).numpy()
+    true_beta = true_beta.repeat(event_num, 1).numpy()
+    true_tau = true_tau.repeat(event_num, 1).numpy()
+    fig, ax = plt.subplots(3, 3, dpi=400)
+    fig.delaxes(ax[2][1])
+    fig.delaxes(ax[2][2])
+    x = np.arange(event_num)
+    for i in np.arange(3):
+        ax[0][i].plot(x, true_beta[:, i], color='r')
+        ax[0][i].plot(x, pred_beta_array[:, i], color='b')
+        ax[0][i].set_title(fr'$\beta_{i + 1}$')
+        ax[1][i].plot(x, true_tau[:, i], color='r')
+        ax[1][i].plot(x, pred_tau_array[:, i], color='b')
+        ax[1][i].set_title(fr'$\tau_{i + 1}$')
+    ax[2][0].plot(x, true_lambda0, color='r')
+    ax[2][0].plot(x, pred_lambda0_array, color='b')
+    ax[2][0].set_title(r'$\lambda_0$')
+    fig.tight_layout()
+    plt.show()
+
+
 if __name__ == '__main__':
-    plot_intensity(save_dir='/Users/huangjinnan/Desktop/PythonProj/Particle-Filter-for-IBHP/model_result'
-                            '/model_result_2022_03_28_15_52_04', last_n=100)
+    plot_intensity(
+        save_dir='/Users/huangjinnan/Desktop/PythonProj/Particle-Filter-for-IBHP/model_result'
+                 '/model_result_2022_04_21_16_30_32'
+    )
+    plot_hyperparameter(
+        save_dir='/Users/huangjinnan/Desktop/PythonProj/Particle-Filter-for-IBHP/model_result/model_result_2022_04_21_22_14_57',
+        true_lambda0=torch.tensor(2.),
+        true_beta=torch.tensor([1., 2., 3.]),
+        true_tau=torch.tensor([.3, .2, .1])
+    )
