@@ -16,7 +16,8 @@ import torch
 import torch.distributions as dist
 from torch.nn.functional import softmax
 
-from IBHP_simulation import IBHP
+# from IBHP_simulation import IBHP
+from IBHP_simulation_torch import IBHPTorch
 from particle_torch import Particle, TENSOR, DEVICE0
 
 
@@ -182,9 +183,6 @@ class ParticleFilter:
                     torch.save(particle.c, f'{save_dir}/particle-{particle.particle_idx}/c.pt')
                     torch.save(particle.w, f'{save_dir}/particle-{particle.particle_idx}/w.pt')
                     torch.save(particle.v, f'{save_dir}/particle-{particle.particle_idx}/v.pt')
-                    torch.save(particle.lambda0_res, f'{save_dir}/particle-{particle.particle_idx}/lambda0.pt')
-                    torch.save(particle.beta_res, f'{save_dir}/particle-{particle.particle_idx}/beta.pt')
-                    torch.save(particle.tau_res, f'{save_dir}/particle-{particle.particle_idx}/tau.pt')
                     torch.save(particle.lambda_tn_tensor,
                                f'{save_dir}/particle-{particle.particle_idx}/lambda_tn_tensor.pt')
             # resampling
@@ -194,23 +192,32 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 200
-    ibhp = IBHP(n_sample=n_sample, random_seed=10)
+    n_sample = 300
+    ibhp = IBHPTorch(
+        n_sample=n_sample,
+        sum_kernel_num=3,
+        word_num=1000,
+        doc_len=20,
+        lambda0=2.,
+        beta=torch.tensor([1., 2., 3.]),
+        tau=torch.tensor([.3, .2, .1]),
+        random_seed=2
+    )
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
     pf = ParticleFilter(
         n_particle=10,
         n_sample=n_sample,
         word_corpus=word_corpus,
-        timestamp_tensor=torch.from_numpy(ibhp.timestamp_array).to(torch.float32),
-        text_tensor=torch.from_numpy(ibhp.text).to(torch.float32),
-        true_lambda_tn=torch.from_numpy(ibhp.lambda_tn_array).to(torch.float32),
+        timestamp_tensor=ibhp.timestamp_tensor,
+        text_tensor=ibhp.text,
+        true_lambda_tn=ibhp.lambda_tn_tensor,
         lambda0=torch.tensor(5.),
         beta=torch.tensor([5., 2., 3.]),
         tau=torch.tensor([.3, .2, .1]),
-        fix_w_v=False,
-        simulation_w=torch.from_numpy(ibhp.w).to(torch.float32),
-        simulation_v=torch.from_numpy(ibhp.v).to(torch.float32),  # float overflow
+        fix_w_v=True,
+        simulation_w=ibhp.w,
+        simulation_v=ibhp.v,  # float overflow
         alpha_lambda0=torch.tensor(3.),
         alpha_beta=torch.tensor(3.),
         alpha_tau=torch.tensor(1.5),

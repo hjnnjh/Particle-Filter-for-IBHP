@@ -62,9 +62,6 @@ class Particle(IBHP):
         self.lambda_tn_tensor = None
         self.fix_w_v = fix_w_v
         self.particle_idx = particle_idx
-        self.lambda0_res = None
-        self.beta_res = None
-        self.tau_res = None
         if self.fix_w_v:
             self.simulation_v = simulation_v.to(self.device)
             self.simulation_w = simulation_w.to(self.device)

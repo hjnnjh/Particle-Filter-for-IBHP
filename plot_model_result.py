@@ -17,7 +17,7 @@ from particle_filter_torch import TENSOR
 
 
 # noinspection DuplicatedCode
-def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
+def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, plot_label=None):
     true_intensity = torch.load(f'{save_dir}/true_lambda_tn.pt', map_location='cpu').numpy()
     particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt', map_location='cpu').numpy()
     timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt', map_location='cpu').numpy()
@@ -56,7 +56,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None):
                 label='Pred')
         ax.set_xticks(timestamp_array[: average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Average Intensity')
+        ax.set_title(f'10 Particles, Average Intensity, {plot_label}')
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
@@ -67,6 +67,11 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
     pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()
     pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
     pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
+
+    print(f'avg lambda0: {np.average(pred_lambda0_array[-50: ])}')
+    print(f'avg beta: {np.average(pred_beta_array[-50: ], axis=0)}')
+    print(f'avg tau: {np.average(pred_tau_array[-50: ], axis=0)}')
+
     event_num = pred_lambda0_array.shape[0]
     true_lambda0 = true_lambda0.repeat(event_num).numpy()
     true_beta = true_beta.repeat(event_num, 1).numpy()
@@ -91,11 +96,11 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
 
 if __name__ == '__main__':
     plot_intensity(
-        save_dir='/Users/huangjinnan/Desktop/PythonProj/Particle-Filter-for-IBHP/model_result'
-                 '/model_result_2022_04_21_16_30_32'
+        save_dir='./model_result/model_result_2022_04_24_18_26_53',
+        plot_label='weight is likelihood + prior'
     )
     plot_hyperparameter(
-        save_dir='/Users/huangjinnan/Desktop/PythonProj/Particle-Filter-for-IBHP/model_result/model_result_2022_04_21_22_14_57',
+        save_dir='./model_result/model_result_2022_04_24_18_26_53',
         true_lambda0=torch.tensor(2.),
         true_beta=torch.tensor([1., 2., 3.]),
         true_tau=torch.tensor([.3, .2, .1])
