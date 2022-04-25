@@ -37,7 +37,7 @@ class Particle:
 
     def __init__(self, word_corpus: TENSOR, timestamp_tensor: TENSOR, text_tensor: TENSOR, particle_idx: int,
                  sum_kernel_num: int = 3,
-                 simulation_w: TENSOR = None, simulation_v: TENSOR = None, fix_w_v: bool = False,
+                 simulation_w: TENSOR = None, simulation_v: TENSOR = None, fix_w_v: bool = False, chunk: bool = False,
                  random_seed: int = None, device: torch.device = DEVICE0):
         """
         :param word_corpus: all unique words
@@ -48,6 +48,7 @@ class Particle:
         :param simulation_v: v vector of simulation data
         :param fix_w_v: whether fix particle status
         """
+        self.chunk = chunk
         self.v = None
         self.w = None
         self.c = None
@@ -296,7 +297,10 @@ class Particle:
         :return:
         """
         chunk_size = n // 100
-        logging.info(f'[event {n}, particle {self.particle_idx}] chunk size: {chunk_size}')
+        if self.chunk:
+            logging.info(f'[event {n}, particle {self.particle_idx}] chunk size: {chunk_size}')
+        else:
+            logging.info(f'[event {n}, particle {self.particle_idx}] chunk disabled')
 
         lambda0_gamma = dist.gamma.Gamma(alpha_lambda0.to(self.device), torch.tensor(1.).to(self.device))
         beta_gamma = dist.gamma.Gamma(alpha_beta.to(self.device), torch.tensor(1.).to(self.device))
@@ -315,25 +319,29 @@ class Particle:
         # log hawkes likelihood for each set of samples, so fast now, wuhu~~~~~
         hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood, n), in_dims=(0, 0, 0))
         log_hawkes_likelihood_tensor = None
-        if chunk_size <= 1:
+        if self.chunk:
+            if chunk_size <= 1:
+                log_hawkes_likelihood_tensor = hawkes_likelihood_vfunc(lambda0_candi_tensor, beta_candi_tensor_mat,
+                                                                       tau_candi_tensor_mat)
+            else:
+                lambda0_candi_tensor_tuple = lambda0_candi_tensor.chunk(chunk_size)
+                beta_candi_tensor_mat_tuple = beta_candi_tensor_mat.chunk(chunk_size)
+                tau_candi_tensor_mat_tuple = tau_candi_tensor_mat.chunk(chunk_size)
+                for i in torch.arange(chunk_size):
+                    if i == 0:
+                        log_hawkes_likelihood_tensor = hawkes_likelihood_vfunc(lambda0_candi_tensor_tuple[i],
+                                                                               beta_candi_tensor_mat_tuple[i],
+                                                                               tau_candi_tensor_mat_tuple[i])
+                    else:
+                        log_hawkes_likelihood_tensor = torch.hstack((log_hawkes_likelihood_tensor,
+                                                                     hawkes_likelihood_vfunc(
+                                                                         lambda0_candi_tensor_tuple[i],
+                                                                         beta_candi_tensor_mat_tuple[i],
+                                                                         tau_candi_tensor_mat_tuple[i]
+                                                                     )))
+        else:
             log_hawkes_likelihood_tensor = hawkes_likelihood_vfunc(lambda0_candi_tensor, beta_candi_tensor_mat,
                                                                    tau_candi_tensor_mat)
-        else:
-            lambda0_candi_tensor_tuple = lambda0_candi_tensor.chunk(chunk_size)
-            beta_candi_tensor_mat_tuple = beta_candi_tensor_mat.chunk(chunk_size)
-            tau_candi_tensor_mat_tuple = tau_candi_tensor_mat.chunk(chunk_size)
-            for i in torch.arange(chunk_size):
-                if i == 0:
-                    log_hawkes_likelihood_tensor = hawkes_likelihood_vfunc(lambda0_candi_tensor_tuple[i],
-                                                                           beta_candi_tensor_mat_tuple[i],
-                                                                           tau_candi_tensor_mat_tuple[i])
-                else:
-                    log_hawkes_likelihood_tensor = torch.hstack((log_hawkes_likelihood_tensor,
-                                                                 hawkes_likelihood_vfunc(
-                                                                     lambda0_candi_tensor_tuple[i],
-                                                                     beta_candi_tensor_mat_tuple[i],
-                                                                     tau_candi_tensor_mat_tuple[i]
-                                                                 )))
         log_weight_tensor = lambda0_candi_prior_log + torch.sum(beta_candi_prior_log, dim=1) + \
                             torch.sum(tau_candi_prior_log, dim=1) + log_hawkes_likelihood_tensor
         normalized_weight_tensor = softmax(log_weight_tensor, 0)
@@ -386,12 +394,13 @@ class StatesFixedParticle(Particle):
 
     def __init__(self, ibhp: IBHPTorch, particle_idx, word_corpus: TENSOR,
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
-                 real_factor_num_seq: TENSOR):
+                 real_factor_num_seq: TENSOR, chunk: bool):
         super(StatesFixedParticle, self).__init__(
             particle_idx=particle_idx,
             text_tensor=ibhp.text,
             timestamp_tensor=ibhp.timestamp_tensor,
-            word_corpus=word_corpus
+            word_corpus=word_corpus,
+            chunk=chunk
         )
         self.real_factor_num_seq = real_factor_num_seq
         self.tau = tau.to(self.device)

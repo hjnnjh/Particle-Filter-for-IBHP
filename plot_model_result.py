@@ -101,11 +101,11 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
 
 if __name__ == '__main__':
     plot_intensity(
-        save_dir='./model_result/model_result_2022_04_25_17_37_08',
+        save_dir='./model_result/model_result_2022_04_26_00_32_06',
         plot_label='weight is likelihood + prior'
     )
     plot_hyperparameter(
-        save_dir='./model_result/model_result_2022_04_25_17_37_08',
+        save_dir='./model_result/model_result_2022_04_26_00_32_06',
         true_lambda0=torch.tensor(2.),
         true_beta=torch.tensor([1., 2., 3.]),
         true_tau=torch.tensor([.3, .2, .1])

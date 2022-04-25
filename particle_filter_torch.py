@@ -29,7 +29,7 @@ class ParticleFilter:
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
                  alpha_lambda0: TENSOR, alpha_beta: TENSOR, alpha_tau: TENSOR, random_num: int,
                  fix_w_v: bool = False,
-                 device: torch.device = DEVICE0, states_fixed: bool = False):
+                 device: torch.device = DEVICE0, states_fixed: bool = False, chunk: bool = False):
         """
         :param n_particle:
         :param n_sample:
@@ -72,7 +72,8 @@ class ParticleFilter:
                     lambda0=self.lambda0,
                     beta=self.beta,
                     tau=self.tau,
-                    real_factor_num_seq=ibhp_ins.factor_num_tensor
+                    real_factor_num_seq=ibhp_ins.factor_num_tensor,
+                    chunk=chunk
                 )
                 for i in range(self.n_particle)]
         else:
@@ -85,7 +86,8 @@ class ParticleFilter:
                     fix_w_v=fix_w_v,
                     simulation_v=ibhp_ins.v,
                     simulation_w=ibhp_ins.w,
-                    device=self.device
+                    device=self.device,
+                    chunk=chunk
                 )
                 for i in range(self.n_particle)]
         self.particle_weight_tensor = torch.tensor([1 / self.n_particle for i in torch.arange(self.n_particle)]).to(
@@ -258,9 +260,10 @@ if __name__ == '__main__':
         alpha_lambda0=torch.tensor(3.),
         alpha_beta=torch.tensor(3.),
         alpha_tau=torch.tensor(1.5),
-        random_num=500,
+        random_num=50,
         states_fixed=True,
-        ibhp_ins=ibhp
+        ibhp_ins=ibhp,
+        chunk=False
     )
 
     pf_states_fixed_particles.filtering(save_res=True)
