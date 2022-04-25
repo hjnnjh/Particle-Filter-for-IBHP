@@ -48,6 +48,7 @@ class IBHPTorch:
         self.timestamp_tensor = None  # Timestamp for each sample
         self.text = None  # sample text vector
         self.K = 0  # Number of topics
+        self.factor_num_tensor = None
         self.lambda0 = lambda0  # base rate
         self.lambda_tn_tensor = None  # rate array
         if self.random_seed:
@@ -113,6 +114,7 @@ class IBHPTorch:
     def generate_first_event(self):
         while self.K == 0:
             self.K = dist.Poisson(self.lambda0).sample()
+        self.factor_num_tensor = self.K.unsqueeze(0)
         self.K = self.K.int()
         self.c = torch.ones((1, self.K))
 
@@ -140,6 +142,7 @@ class IBHPTorch:
                 c_old = dist.Bernoulli(p).sample()
         k_plus = k_plus.int()
         self.K += k_plus
+        self.factor_num_tensor = torch.hstack([self.factor_num_tensor, self.K])
         if k_plus:
             c_new = torch.ones(k_plus)
             c = torch.hstack([c_old, c_new])

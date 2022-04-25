@@ -18,18 +18,18 @@ from torch.nn.functional import softmax
 
 # from IBHP_simulation import IBHP
 from IBHP_simulation_torch import IBHPTorch
-from particle_torch import Particle, TENSOR, DEVICE0
+from particle_torch import Particle, StatesFixedParticle, TENSOR, DEVICE0
 
 
-# noinspection PyShadowingNames
+# noinspection PyShadowingNames,DuplicatedCode,PyUnresolvedReferences
 class ParticleFilter:
 
     def __init__(self, n_particle: int, n_sample: int,
-                 word_corpus: TENSOR, timestamp_tensor: TENSOR, text_tensor: TENSOR, true_lambda_tn: TENSOR,
-                 fix_w_v: bool, simulation_w: TENSOR, simulation_v: TENSOR,
+                 word_corpus: TENSOR, ibhp_ins: IBHPTorch,
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
                  alpha_lambda0: TENSOR, alpha_beta: TENSOR, alpha_tau: TENSOR, random_num: int,
-                 device: torch.device = DEVICE0):
+                 fix_w_v: bool = False,
+                 device: torch.device = DEVICE0, states_fixed: bool = False):
         """
         :param n_particle:
         :param n_sample:
@@ -49,10 +49,10 @@ class ParticleFilter:
         :param random_num:
         :param device:
         """
-        self.true_lambda_tn = true_lambda_tn
+        self.true_lambda_tn = ibhp_ins.lambda_tn_tensor
         self.word_corpus = word_corpus
-        self.timestamp_tensor = timestamp_tensor
-        self.text_tensor = text_tensor
+        self.timestamp_tensor = ibhp_ins.timestamp_tensor
+        self.text_tensor = ibhp_ins.text
         self.random_num = random_num
         self.alpha_tau = alpha_tau
         self.alpha_beta = alpha_beta
@@ -63,18 +63,31 @@ class ParticleFilter:
         self.n_sample = n_sample
         self.n_particle = n_particle
         self.device = device
-        self.particle_list = [
-            Particle(
-                word_corpus=self.word_corpus,
-                timestamp_tensor=self.timestamp_tensor,
-                text_tensor=self.text_tensor,
-                particle_idx=i,
-                fix_w_v=fix_w_v,
-                simulation_v=simulation_v,
-                simulation_w=simulation_w,
-                device=self.device
-            )
-            for i in range(self.n_particle)]
+        if states_fixed:
+            self.particle_list = [
+                StatesFixedParticle(
+                    ibhp=ibhp_ins,
+                    particle_idx=i,
+                    word_corpus=self.word_corpus,
+                    lambda0=self.lambda0,
+                    beta=self.beta,
+                    tau=self.tau,
+                    real_factor_num_seq=ibhp_ins.factor_num_tensor
+                )
+                for i in range(self.n_particle)]
+        else:
+            self.particle_list = [
+                Particle(
+                    word_corpus=self.word_corpus,
+                    timestamp_tensor=self.timestamp_tensor,
+                    text_tensor=self.text_tensor,
+                    particle_idx=i,
+                    fix_w_v=fix_w_v,
+                    simulation_v=ibhp_ins.v,
+                    simulation_w=ibhp_ins.w,
+                    device=self.device
+                )
+                for i in range(self.n_particle)]
         self.particle_weight_tensor = torch.tensor([1 / self.n_particle for i in torch.arange(self.n_particle)]).to(
             self.device)
 
@@ -84,19 +97,28 @@ class ParticleFilter:
         :return:
         """
         for particle in self.particle_list:
-            logging.info(f'[event {n}, particle {particle.particle_idx}] Sampling particle status')
-            if n == 1:
-                particle.sample_particle_first_event_status(self.lambda0, self.beta, self.tau)
+            if hasattr(particle, 'states_fixed'):
+                particle.compute_lambda_tn(n)
             else:
-                particle.sample_particle_following_event_status(n=n)
-
-            logging.info(f'[event {n}, particle {particle.particle_idx}] Updating hyper-parameter')
+                logging.info(f'[event {n}, particle {particle.particle_idx}] Sampling particle status')
+                if n == 1:
+                    particle.sample_particle_first_event_status(self.lambda0, self.beta, self.tau)
+                else:
+                    particle.sample_particle_following_event_status(n=n)
+            if hasattr(particle, 'states_fixed'):
+                logging.info(f'[event {n}, states fixed particle {particle.particle_idx}] Updating hyper-parameter')
+            else:
+                logging.info(f'[event {n}, particle {particle.particle_idx}] Updating hyper-parameter')
             particle.update_hyperparameter(n=n, alpha_lambda0=self.alpha_lambda0, alpha_beta=self.alpha_beta,
                                            alpha_tau=self.alpha_tau, random_num=self.random_num)
 
-            logging.info(f'[event {n}, particle {particle.particle_idx}] Updating particle weight')
-            particle.update_log_particle_weight(old_particle_weight=self.particle_weight_tensor[particle.particle_idx],
-                                                n=n)
+            if hasattr(particle, 'states_fixed'):
+                logging.info(f'[event {n}, states fixed particle {particle.particle_idx}] Updating particle weight')
+            else:
+                logging.info(f'[event {n}, particle {particle.particle_idx}] Updating particle weight')
+            particle.update_log_particle_weight(
+                old_particle_weight=self.particle_weight_tensor[particle.particle_idx],
+                n=n)
 
     def _update_particle_weight_tensor(self):
         for particle in self.particle_list:
@@ -192,7 +214,7 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 300
+    n_sample = 1000
     ibhp = IBHPTorch(
         n_sample=n_sample,
         sum_kernel_num=3,
@@ -205,22 +227,40 @@ if __name__ == '__main__':
     )
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
-    pf = ParticleFilter(
+    # totally random particle
+    # pf = ParticleFilter(
+    #     n_particle=10,
+    #     n_sample=n_sample,
+    #     word_corpus=word_corpus,
+    #     timestamp_tensor=ibhp.timestamp_tensor,
+    #     text_tensor=ibhp.text,
+    #     true_lambda_tn=ibhp.lambda_tn_tensor,
+    #     lambda0=torch.tensor(5.),
+    #     beta=torch.tensor([5., 2., 3.]),
+    #     tau=torch.tensor([.3, .2, .1]),
+    #     fix_w_v=True,
+    #     simulation_w=ibhp.w,
+    #     simulation_v=ibhp.v,  # float overflow
+    #     alpha_lambda0=torch.tensor(3.),
+    #     alpha_beta=torch.tensor(3.),
+    #     alpha_tau=torch.tensor(1.5),
+    #     random_num=10000
+    # )
+
+    # states fixed particle
+    pf_states_fixed_particles = ParticleFilter(
         n_particle=10,
         n_sample=n_sample,
         word_corpus=word_corpus,
-        timestamp_tensor=ibhp.timestamp_tensor,
-        text_tensor=ibhp.text,
-        true_lambda_tn=ibhp.lambda_tn_tensor,
         lambda0=torch.tensor(5.),
-        beta=torch.tensor([5., 2., 3.]),
-        tau=torch.tensor([.3, .2, .1]),
-        fix_w_v=True,
-        simulation_w=ibhp.w,
-        simulation_v=ibhp.v,  # float overflow
+        beta=torch.tensor([5., 5., 5.]),
+        tau=torch.tensor([.5, .5, .5]),
         alpha_lambda0=torch.tensor(3.),
         alpha_beta=torch.tensor(3.),
         alpha_tau=torch.tensor(1.5),
-        random_num=10000
+        random_num=500,
+        states_fixed=True,
+        ibhp_ins=ibhp
     )
-    pf.filtering(save_res=True)
+
+    pf_states_fixed_particles.filtering(save_res=True)

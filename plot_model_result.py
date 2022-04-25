@@ -13,7 +13,12 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib import rcParams
+
 from particle_filter_torch import TENSOR
+
+rcParams['font.family'] = 'serif'
+rcParams['font.serif'] = 'Times New Roman'
 
 
 # noinspection DuplicatedCode
@@ -32,7 +37,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, plot_
         ax.plot(timestamp_array[: average_pred_intensity_array.shape[0]],
                 true_intensity[: average_pred_intensity_array.shape[0]], color='r', label='True')
         ax.plot(timestamp_array[: average_pred_intensity_array.shape[0]], average_pred_intensity_array, color='b',
-                label='Pred')
+                label='Pred', alpha=0.5)
         ax.set_xticks(timestamp_array[: average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
         ax.set_title(f'10 Particles, First {first_n} Events Average Intensity',
@@ -44,7 +49,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, plot_
                 true_intensity[: finished_num][-average_pred_intensity_array.shape[0]:], color='r', label='True')
         ax.plot(timestamp_array[: finished_num][-average_pred_intensity_array.shape[0]:],
                 average_pred_intensity_array, color='b',
-                label='Pred')
+                label='Pred', alpha=0.5)
         ax.set_xticks(timestamp_array[: finished_num][-average_pred_intensity_array.shape[0]:])
         ax.set_xticklabels([])
         ax.set_title(f'10 Particles, Last {last_n} Events Average Intensity',
@@ -53,7 +58,7 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, plot_
         ax.plot(timestamp_array[: average_pred_intensity_array.shape[0]],
                 true_intensity[: average_pred_intensity_array.shape[0]], color='r', label='True')
         ax.plot(timestamp_array[: average_pred_intensity_array.shape[0]], average_pred_intensity_array, color='b',
-                label='Pred')
+                label='Pred', alpha=0.5)
         ax.set_xticks(timestamp_array[: average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
         ax.set_title(f'10 Particles, Average Intensity, {plot_label}')
@@ -68,9 +73,9 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
     pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
     pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
 
-    print(f'avg lambda0: {np.average(pred_lambda0_array[-50: ])}')
-    print(f'avg beta: {np.average(pred_beta_array[-50: ], axis=0)}')
-    print(f'avg tau: {np.average(pred_tau_array[-50: ], axis=0)}')
+    print(f'avg lambda0: {np.average(pred_lambda0_array)}')
+    print(f'avg beta: {np.average(pred_beta_array, axis=0)}')
+    print(f'avg tau: {np.average(pred_tau_array, axis=0)}')
 
     event_num = pred_lambda0_array.shape[0]
     true_lambda0 = true_lambda0.repeat(event_num).numpy()
@@ -82,13 +87,13 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
     x = np.arange(event_num)
     for i in np.arange(3):
         ax[0][i].plot(x, true_beta[:, i], color='r')
-        ax[0][i].plot(x, pred_beta_array[:, i], color='b')
+        ax[0][i].plot(x, pred_beta_array[:, i], color='b', alpha=0.5)
         ax[0][i].set_title(fr'$\beta_{i + 1}$')
         ax[1][i].plot(x, true_tau[:, i], color='r')
-        ax[1][i].plot(x, pred_tau_array[:, i], color='b')
+        ax[1][i].plot(x, pred_tau_array[:, i], color='b', alpha=0.5)
         ax[1][i].set_title(fr'$\tau_{i + 1}$')
     ax[2][0].plot(x, true_lambda0, color='r')
-    ax[2][0].plot(x, pred_lambda0_array, color='b')
+    ax[2][0].plot(x, pred_lambda0_array, color='b', alpha=0.5)
     ax[2][0].set_title(r'$\lambda_0$')
     fig.tight_layout()
     plt.show()
@@ -96,11 +101,11 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
 
 if __name__ == '__main__':
     plot_intensity(
-        save_dir='./model_result/model_result_2022_04_24_18_26_53',
+        save_dir='./model_result/model_result_2022_04_25_17_37_08',
         plot_label='weight is likelihood + prior'
     )
     plot_hyperparameter(
-        save_dir='./model_result/model_result_2022_04_24_18_26_53',
+        save_dir='./model_result/model_result_2022_04_25_17_37_08',
         true_lambda0=torch.tensor(2.),
         true_beta=torch.tensor([1., 2., 3.]),
         true_tau=torch.tensor([.3, .2, .1])

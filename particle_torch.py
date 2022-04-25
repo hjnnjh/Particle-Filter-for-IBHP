@@ -18,7 +18,7 @@ import torch.distributions as dist
 from functorch import vmap
 from torch.nn.functional import softmax
 
-from IBHP_simulation import IBHP
+from IBHP_simulation_torch import IBHPTorch
 
 # ------------------------------ global vars ------------------------------
 
@@ -27,7 +27,7 @@ TENSOR = torch.Tensor
 
 
 # noinspection SpellCheckingInspection,PyTypeChecker,DuplicatedCode
-class Particle(IBHP):
+class Particle:
     """
         This class implements all the steps of single particle sampling, hyperparameter updating and particle weight
         calculation.
@@ -48,7 +48,15 @@ class Particle(IBHP):
         :param simulation_v: v vector of simulation data
         :param fix_w_v: whether fix particle status
         """
-        super(Particle, self).__init__()
+        self.v = None
+        self.w = None
+        self.c = None
+        self.K = None
+        self.v_0 = None
+        self.w_0 = None
+        self.tau = None
+        self.beta = None
+        self.lambda0 = None
         self.device = device
         self.random_seed = random_seed
         self.sum_kernel_num = torch.tensor(sum_kernel_num).to(self.device)
@@ -156,7 +164,7 @@ class Particle(IBHP):
 
         # compute lambda_k_1
         self.calculate_lambda_k(1)
-        c_1 = torch.argwhere(self.c[-1] != 0)[:, 0]
+        c_1 = torch.argwhere(self.c[0] != 0)[:, 0]
         self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_1].reshape(1, -1), dim=1)
         logging.info(f'[event 1, particle {self.particle_idx}] factor occurence(c) shape: {self.c.shape}')
         # self.collect_factor_intensity(1)
@@ -205,7 +213,7 @@ class Particle(IBHP):
 
         # compute lambda_tn_k, lambda_tn
         self.calculate_lambda_k(n)
-        c_n = torch.argwhere(self.c[-1] != 0)[:, 0]
+        c_n = torch.argwhere(self.c[n - 1] != 0)[:, 0]
         self.lambda_tn_tensor = torch.hstack((self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n])))
         logging.info(f'[event {n}, particle {self.particle_idx}] factor occurence(c) shape: {self.c.shape}')
         # self.collect_factor_intensity(n)
@@ -368,3 +376,53 @@ class Particle(IBHP):
         log_likelihood_text = torch.sum(text_n * vn_avg)
 
         self.log_particle_weight = torch.log(old_particle_weight) + log_likelihood_timestamp + log_likelihood_text
+
+
+# noinspection SpellCheckingInspection
+class StatesFixedParticle(Particle):
+    """
+    The states of all particles in this class are fixed.
+    """
+
+    def __init__(self, ibhp: IBHPTorch, particle_idx, word_corpus: TENSOR,
+                 lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
+                 real_factor_num_seq: TENSOR):
+        super(StatesFixedParticle, self).__init__(
+            particle_idx=particle_idx,
+            text_tensor=ibhp.text,
+            timestamp_tensor=ibhp.timestamp_tensor,
+            word_corpus=word_corpus
+        )
+        self.real_factor_num_seq = real_factor_num_seq
+        self.tau = tau.to(self.device)
+        self.beta = beta.to(self.device)
+        self.lambda0 = lambda0.to(self.device)
+        self.w = ibhp.w.to(self.device)
+        self.v = ibhp.v.to(self.device)
+        self.c = ibhp.c.to(self.device)
+        self.states_fixed = True
+
+    def calculate_lambda_k(self, n):
+        """
+        compute lambda_k tensor for each event
+        :param n:
+        :return:
+        """
+        num_k_n = self.real_factor_num_seq[n - 1].int()
+        if n == 1:
+            self.lambda_k_tensor = self.w[:, : num_k_n].T @ self.beta
+        else:
+            delta_t_tensor = self.timestamp_tensor[n - 1] - self.timestamp_tensor[: n]
+            exp_kernel_vfunc = vmap(self.exp_kernel, in_dims=(0, None, None))
+            exp_kernel_mat = exp_kernel_vfunc(delta_t_tensor, self.beta, self.tau)
+            kappa_history = torch.einsum('lk,tl->tk', self.w[:, : num_k_n], exp_kernel_mat) * self.c[: n, : num_k_n]
+            kappa_history_count = torch.count_nonzero(self.c[: n, : num_k_n], dim=1).reshape(-1, 1)
+            self.lambda_k_tensor = torch.sum(kappa_history / kappa_history_count, dim=0)
+
+    def compute_lambda_tn(self, n):
+        self.calculate_lambda_k(n)
+        c_n = torch.argwhere(self.c[n - 1] != 0)[:, 0]
+        if n == 1:
+            self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_n].reshape(1, -1), dim=1)
+        else:
+            self.lambda_tn_tensor = torch.hstack((self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n])))
