@@ -131,7 +131,9 @@ dmypy.json
 # custom
 .idea/
 dataset/
-img/
+img*/
 *.ipynb
 .vscode/
 pyro_sample.py
+model_result/
+nips-dataset/

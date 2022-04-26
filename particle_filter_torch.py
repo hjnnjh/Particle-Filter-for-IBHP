@@ -9,6 +9,7 @@
 """
 import logging
 import os
+import time
 from copy import deepcopy
 from datetime import datetime
 
@@ -216,7 +217,7 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 1000
+    n_sample = 200
     ibhp = IBHPTorch(
         n_sample=n_sample,
         sum_kernel_num=3,
@@ -229,6 +230,7 @@ if __name__ == '__main__':
     )
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
+
     # totally random particle
     # pf = ParticleFilter(
     #     n_particle=10,
@@ -265,5 +267,6 @@ if __name__ == '__main__':
         ibhp_ins=ibhp,
         chunk=False
     )
-
-    pf_states_fixed_particles.filtering(save_res=True)
+    start = time.time()
+    pf_states_fixed_particles.filtering(save_res=False)
+    print(f'trick time cost: {time.time() - start}')

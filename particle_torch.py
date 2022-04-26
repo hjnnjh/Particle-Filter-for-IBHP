@@ -235,18 +235,19 @@ class Particle:
         for i in torch.arange(1, n + 1):
             if i == 1:
                 # just compute prod term when i=1
+                c_1 = torch.argwhere(self.c[i - 1] != 0)[:, 0]
                 prod_delta_ti_tj = self.timestamp_tensor[i - 1] - self.timestamp_tensor[: i]
                 prod_delta_ti_tj.unsqueeze_(1)
                 prod_exp_term = torch.exp(- prod_delta_ti_tj / tau)
                 prod_exp_term.mul_(beta)
-                prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, prod_exp_term) * self.c[: i]
+                prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_1], prod_exp_term) * self.c[: i, c_1]
                 kappa_j_count_prod = torch.count_nonzero(self.c[: i], dim=1).reshape(-1, 1)
-                c_1 = torch.argwhere(self.c[i - 1] != 0)[:, 0]
-                log_sum_1_prod = torch.sum(prod_exp_term_einsum[:, c_1] / kappa_j_count_prod)
+                log_sum_1_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
                 log_sum_1_prod.log_()
                 log_prod_term = log_prod_term + log_sum_1_prod
             else:
                 # integral term
+                c_i = torch.argwhere(self.c[i - 1] != 0)[:, 0]  # shared
                 integral_delta_ti_1_tj = self.timestamp_tensor[i - 2] - self.timestamp_tensor[: i - 1]
                 integral_delta_ti_1_tj.unsqueeze_(1)
                 exp_ti_1_tj = torch.exp(- integral_delta_ti_1_tj / tau_unsqueezed)
@@ -256,10 +257,9 @@ class Particle:
                 sum_exp_term = exp_ti_tj - exp_ti_1_tj
                 sum_exp_term.mul_(beta)
                 sum_exp_term.mul_(tau)
-                sum_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, sum_exp_term) * self.c[: i - 1]
+                sum_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], sum_exp_term) * self.c[: i - 1, c_i]
                 kappa_j_count_sum = torch.count_nonzero(self.c[: i - 1], dim=1).reshape(-1, 1)
-                c_i = torch.argwhere(self.c[i - 1] != 0)[:, 0]  # shared
-                sum_j_integral = torch.sum(sum_exp_term_einsum[:, c_i] / kappa_j_count_sum)
+                sum_j_integral = torch.sum(sum_exp_term_einsum / kappa_j_count_sum)
                 sum_term = sum_term + sum_j_integral
 
                 # prod term
@@ -267,9 +267,9 @@ class Particle:
                 prod_delta_ti_tj.unsqueeze_(1)
                 prod_exp_term = torch.exp(- prod_delta_ti_tj / tau)
                 prod_exp_term.mul_(beta)
-                prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, prod_exp_term) * self.c[: i]
+                prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], prod_exp_term) * self.c[: i, c_i]
                 kappa_j_count_prod = torch.count_nonzero(self.c[: i], dim=1).reshape(-1, 1)
-                log_sum_j_prod = torch.sum(prod_exp_term_einsum[:, c_i] / kappa_j_count_prod)
+                log_sum_j_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
                 log_sum_j_prod.log_()
                 log_prod_term = log_prod_term + log_sum_j_prod
 
