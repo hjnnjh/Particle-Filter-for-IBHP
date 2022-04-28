@@ -68,10 +68,10 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, plot_
     plt.show()
 
 
-def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, true_tau: TENSOR):
-    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()
-    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
-    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
+def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, true_tau: TENSOR, plot_size: int):
+    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()[plot_size:]
+    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()[plot_size:]
+    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()[plot_size:]
 
     print(f'avg lambda0: {np.average(pred_lambda0_array)}')
     print(f'avg beta: {np.average(pred_beta_array, axis=0)}')
@@ -101,12 +101,14 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
 
 if __name__ == '__main__':
     plot_intensity(
-        save_dir='./model_result/model_result_2022_04_26_00_32_06',
-        plot_label='weight is likelihood + prior'
+        save_dir='./model_result/model_result_2022_04_26_14_40_59',
+        plot_label='weight is likelihood + prior',
+        last_n=200
     )
     plot_hyperparameter(
-        save_dir='./model_result/model_result_2022_04_26_00_32_06',
+        save_dir='./model_result/model_result_2022_04_26_14_40_59',
         true_lambda0=torch.tensor(2.),
         true_beta=torch.tensor([1., 2., 3.]),
-        true_tau=torch.tensor([.3, .2, .1])
+        true_tau=torch.tensor([.3, .2, .1]),
+        plot_size=-150
     )

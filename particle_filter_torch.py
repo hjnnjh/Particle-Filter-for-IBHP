@@ -217,7 +217,7 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 200
+    n_sample = 100
     ibhp = IBHPTorch(
         n_sample=n_sample,
         sum_kernel_num=3,
