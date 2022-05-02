@@ -9,8 +9,8 @@
 @Desc    :   None
 """
 import logging
+import time
 from functools import partial
-from typing import Dict
 
 import numpy as np
 import torch
@@ -21,10 +21,8 @@ from torch.nn.functional import softmax
 from IBHP_simulation_torch import IBHPTorch
 
 # ------------------------------ global vars ------------------------------
-# when sample hyper-parameters, allocate 3 gpu to compute sample likelihood separately
+
 DEVICE0 = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
-DEVICE1 = torch.device('cuda:1')
-DEVICE2 = torch.device('cuda:2')
 TENSOR = torch.Tensor
 
 
@@ -158,6 +156,7 @@ class Particle:
         self.lambda0 = lambda0.to(self.device)
         self.beta = beta.to(self.device)
         self.tau = tau.to(self.device)
+
         self.w_0 = torch.tensor([1 / self.sum_kernel_num] *
                                 self.sum_kernel_num).to(self.device)
         self.v_0 = torch.tensor([1 / self.word_num] * self.word_num).to(
@@ -267,14 +266,6 @@ class Particle:
         :param tau: like tensor([.1, .2, .3])
         :return:
         """
-        # copy particle tensor to allocated gpu device
-        lambda0 = lambda0.to(allocated_device)
-        beta = beta.to(allocated_device)
-        tau = tau.to(allocated_device)
-        timestamp_tensor = self.timestamp_tensor.to(allocated_device)
-        w = self.w.to(allocated_device)
-        c = self.c.to(allocated_device)
-
         tau_unsqueezed = tau.unsqueeze(0)
         log_prod_term = torch.tensor(0.).to(self.device)
         sum_term = torch.tensor(0.).to(self.device)
@@ -304,8 +295,8 @@ class Particle:
                 integral_delta_ti_1_tj.unsqueeze_(1)
                 exp_ti_1_tj = torch.exp(-integral_delta_ti_1_tj /
                                         tau_unsqueezed)
-                integral_delta_ti_tj = timestamp_tensor[
-                    i - 1] - timestamp_tensor[:i - 1]
+                integral_delta_ti_tj = self.timestamp_tensor[
+                    i - 1] - self.timestamp_tensor[:i - 1]
                 integral_delta_ti_tj.unsqueeze_(1)
                 exp_ti_tj = torch.exp(-integral_delta_ti_tj / tau_unsqueezed)
                 sum_exp_term = exp_ti_tj - exp_ti_1_tj
@@ -321,8 +312,8 @@ class Particle:
                 sum_term = sum_term + sum_j_integral
 
                 # prod term
-                prod_delta_ti_tj = timestamp_tensor[i -
-                                                    1] - timestamp_tensor[:i]
+                prod_delta_ti_tj = self.timestamp_tensor[
+                    i - 1] - self.timestamp_tensor[:i]
                 prod_delta_ti_tj.unsqueeze_(1)
                 prod_exp_term = torch.exp(-prod_delta_ti_tj / tau)
                 prod_exp_term.mul_(beta)
@@ -337,17 +328,16 @@ class Particle:
                 log_prod_term = log_prod_term + log_sum_j_prod
 
         if n == 1:
-            log_integral_term = -lambda0 * timestamp_tensor[0]
+            log_integral_term = -lambda0 * self.timestamp_tensor[0]
         else:
-            log_integral_term = -lambda0 * timestamp_tensor[0] + sum_term
+            log_integral_term = -lambda0 * self.timestamp_tensor[0] + sum_term
 
         # log hawkes likelihood
         log_hawkes_likelihood = log_integral_term + log_prod_term
         return log_hawkes_likelihood
 
-    def sample_hyperparameter(self,
+    def update_hyperparameter(self,
                               n: int,
-                              allocated_device: torch.device,
                               alpha_lambda0: TENSOR,
                               alpha_beta: TENSOR,
                               alpha_tau: TENSOR,
@@ -378,20 +368,16 @@ class Particle:
                                      torch.tensor(1.).to(self.device))
 
         # draw samples from Gamma dist
-        lambda0_candi_tensor = lambda0_gamma.sample(
-            (random_num, )).to(allocated_device)
+        lambda0_candi_tensor = lambda0_gamma.sample((random_num, ))
         beta_candi_tensor_mat = beta_gamma.sample(
-            (random_num, self.sum_kernel_num)).to(allocated_device)
+            (random_num, self.sum_kernel_num))
         tau_candi_tensor_mat = tau_gamma.sample(
-            (random_num, self.sum_kernel_num)).to(allocated_device)
+            (random_num, self.sum_kernel_num))
 
         # log prior prob
-        lambda0_candi_prior_log = lambda0_gamma.log_prob(
-            lambda0_candi_tensor).to(allocated_device)
-        beta_candi_prior_log = beta_gamma.log_prob(beta_candi_tensor_mat).to(
-            allocated_device)
-        tau_candi_prior_log = tau_gamma.log_prob(tau_candi_tensor_mat).to(
-            allocated_device)
+        lambda0_candi_prior_log = lambda0_gamma.log_prob(lambda0_candi_tensor)
+        beta_candi_prior_log = beta_gamma.log_prob(beta_candi_tensor_mat)
+        tau_candi_prior_log = tau_gamma.log_prob(tau_candi_tensor_mat)
 
         # log hawkes likelihood for each set of samples, so fast now, wuhu~~~~~
         hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood, n),
