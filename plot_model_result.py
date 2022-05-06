@@ -27,7 +27,7 @@ rcParams['font.serif'] = 'Times New Roman'
 def plot_intensity(save_dir: str,
                    last_n: int = None,
                    first_n: int = None,
-                   plot_label=None):
+                   custom_title=None):
     true_intensity = torch.load(f'{save_dir}/true_lambda_tn.pt',
                                 map_location='cpu').numpy()
     particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt',
@@ -57,7 +57,7 @@ def plot_intensity(save_dir: str,
                 alpha=0.5)
         ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, First {first_n} Events Average Intensity',
+        ax.set_title(f'{particle_weight.shape[0]} Particles, First {first_n} Events Average Intensity',
                      fontsize=10)
     if last_n:
         finished_num = average_pred_intensity_array.shape[0]
@@ -77,7 +77,7 @@ def plot_intensity(save_dir: str,
         ax.set_xticks(timestamp_array[:finished_num]
                       [-average_pred_intensity_array.shape[0]:])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Last {last_n} Events Average Intensity',
+        ax.set_title(f'{particle_weight.shape[0]} Particles, Last {last_n} Events Average Intensity',
                      fontsize=10)
     if not first_n and not last_n:
         ax.plot(timestamp_array[:average_pred_intensity_array.shape[0]],
@@ -91,7 +91,7 @@ def plot_intensity(save_dir: str,
                 alpha=0.5)
         ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'10 Particles, Average Intensity, {plot_label}')
+        ax.set_title(f'{particle_weight.shape[0]} Particles, Average Intensity, {custom_title}')
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
@@ -99,13 +99,17 @@ def plot_intensity(save_dir: str,
 
 
 def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR,
-                        true_tau: TENSOR, plot_size: int):
+                        true_tau: TENSOR, last_n: int = None):
     pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt',
-                                    map_location='cpu').numpy()[plot_size:]
+                                    map_location='cpu').numpy()
     pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt',
-                                 map_location='cpu').numpy()[plot_size:]
+                                 map_location='cpu').numpy()
     pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt',
-                                map_location='cpu').numpy()[plot_size:]
+                                map_location='cpu').numpy()
+    if last_n:
+        pred_lambda0_array = pred_lambda0_array[-last_n:]
+        pred_beta_array = pred_beta_array[-last_n:]
+        pred_tau_array = pred_tau_array[-last_n:]
 
     print(f'avg lambda0: {np.average(pred_lambda0_array)}')
     print(f'avg beta: {np.average(pred_beta_array, axis=0)}')
@@ -164,7 +168,7 @@ def plot_user_intensity(save_dir: str, username: str):
     fig.savefig(f'./img/{username}_intensity.png')
 
 
-def plot_user_hyperparameters(save_dir: str, username: str):
+def plot_user_hyperparameter(save_dir: str, username: str):
     pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt',
                                     map_location='cpu').numpy()
     pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt',
@@ -210,7 +214,7 @@ def plot_user_lambda_k(save_dir: str, username: str):
                 f'{save_dir}/{pt_filename}', map_location='cpu').numpy()
     sorted_lambda_k_list = sorted(
         lambda_k_file_dict.items(),
-        key=lambda d: int(re.search(r'event_([0-9]+)', d[0])[1]))
+        key=lambda d: int(re.search(r'event_(\d+)', d[0])[1]))
     v_max_length = sorted_lambda_k_list[-1][1].shape[0]
     new_lambda_k_list = []
     for k, v in sorted_lambda_k_list:
@@ -226,18 +230,34 @@ def plot_user_lambda_k(save_dir: str, username: str):
     fig.savefig(f'./img/{username}_lambda_k_mat.png')
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     # plot_user_intensity(
     #     save_dir='./model_result/model_result_A-Atwood-4_2022_04_29_11_40_51',
     #     username='A-Atwood-4')
-    # plot_user_hyperparameters(
+
+    # plot_user_hyperparameter(
     #     save_dir='./model_result/model_result_A-Atwood-4_2022_04_29_11_40_51',
     #     username='A-Atwood-4')
+
     # plot_user_c(
     #     save_dir=
     #     './model_result/model_result_A-Atwood-4_2022_04_29_11_40_51/particle-0',
     #     username='A-Atwood-4')
-    plot_user_lambda_k(
-        save_dir=
-        './model_result/model_result_A-Atwood-4_2022_04_29_11_40_51/particle-0',
-        username='A-Atwood-4')
+
+    # plot_user_lambda_k(
+    #     save_dir=
+    #     './model_result/model_result_A-Atwood-4_2022_04_29_11_40_51/particle-0',
+    #     username='A-Atwood-4')
+
+    # plot_hyperparameter(
+    #     save_dir='./model_result/model_result_test_2022_05_05_23_52_46',
+    #     true_lambda0=torch.tensor(2.),
+    #     true_beta=torch.tensor([1., 2., 3.]),
+    #     true_tau=torch.tensor([.3, .2, .1]),
+    #     last_n=200
+    # )
+    #
+    # plot_intensity(
+    #     save_dir='./model_result/model_result_test_2022_05_05_23_52_46',
+    #     last_n=200
+    # )

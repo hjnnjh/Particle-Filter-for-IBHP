@@ -193,7 +193,7 @@ class IBHPTorch:
 
 if __name__ == "__main__":
     ibhp_ins = IBHPTorch(
-        n_sample=200,
+        n_sample=250,
         random_seed=2,
         doc_len=20,
         word_num=1000,

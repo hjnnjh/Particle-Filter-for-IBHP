@@ -282,6 +282,124 @@ class Particle:
         log_hawkes_likelihood = log_integral_term + log_prod_term
         return log_hawkes_likelihood
 
+    def log_hawkes_likelihood_overall(self, n, lambda0: TENSOR, beta: TENSOR,
+                                      tau: TENSOR):
+        """
+        log hawkes likelihood(overall rate) for IBHP
+
+        Args:
+            n (_type_): _description_
+            lambda0 (TENSOR): _description_
+            beta (TENSOR): _description_
+            tau (TENSOR): _description_
+        """
+        tau_unsqueezed = tau.unsqueeze(0)
+        log_prod_term = torch.tensor(0.).to(self.device)
+        # prod term
+        for i in torch.arange(1, n + 1):
+            # c_i = torch.argwhere(self.c[i - 1] != 0)[:, 0]
+            prod_delta_ti_tj = self.timestamp_tensor[i - 1] - self.timestamp_tensor[:i]
+            prod_delta_ti_tj.unsqueeze_(1)
+            prod_exp_term = torch.exp(-prod_delta_ti_tj / tau)
+            prod_exp_term.mul_(beta)
+            prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, prod_exp_term) * self.c[:i]
+            kappa_j_count_prod = torch.count_nonzero(self.c[:i], dim=1).reshape(-1, 1)
+            log_sum_i_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
+            log_sum_i_prod.log_()
+            log_prod_term = log_prod_term + log_sum_i_prod
+
+        # integral term
+        if n == 1:
+            log_integral_term = -lambda0 * self.timestamp_tensor[0]
+        else:
+            # c_n_1 = torch.argwhere(self.c[n - 1] != 0)[:, 0]
+            integral_delta_tn_tj = self.timestamp_tensor[n - 1] - self.timestamp_tensor[:n - 1]
+            integral_delta_tn_tj.unsqueeze_(1)
+            exp_tn_tj = torch.exp(-integral_delta_tn_tj / tau_unsqueezed)
+            sum_exp_term = exp_tn_tj - 1
+            sum_exp_term.mul_(beta)
+            sum_exp_term.mul_(tau)
+            sum_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, sum_exp_term) * self.c[:n - 1]
+            kappa_j_count_sum = torch.count_nonzero(self.c[:n - 1], dim=1).reshape(-1, 1)
+            sum_term = torch.sum(sum_exp_term_einsum / kappa_j_count_sum)
+            log_integral_term = -lambda0 * self.timestamp_tensor[n - 1] + sum_term
+
+        # overall hawkes likelihood
+        log_hawkes_likelihood_overall = log_integral_term + log_prod_term
+        return log_hawkes_likelihood_overall
+
+    def log_hawkes_likelihood_without_prod_term_my_version(self, n, lambda0: TENSOR, beta: TENSOR, tau: TENSOR):
+        """
+        log hawkes likelihood based without product terms(my version)
+        :param n:
+        :param lambda0:
+        :param beta:
+        :param tau:
+        :return:
+        """
+        tau_unsqueezed = tau.unsqueeze(0)
+        # log_prod_term = torch.tensor(0.).to(self.device)
+        sum_term = torch.tensor(0.).to(self.device)
+        max_t = self.timestamp_tensor[-1] + 1
+        for i in torch.arange(1, n + 1):
+            c_i = torch.argwhere(self.c[i - 1] != 0)[:, 0]
+            # integral term
+            integral_delta_t_tj = max_t - self.timestamp_tensor[: i]
+            integral_delta_t_tj.unsqueeze_(1)
+            integral_delta_ti_tj = self.timestamp_tensor[i - 1] - self.timestamp_tensor[: i]
+            integral_delta_ti_tj.unsqueeze_(1)  # this term can be shared
+            exp_t_tj = torch.exp(- integral_delta_t_tj / tau_unsqueezed)
+            exp_ti_tj = torch.exp(- integral_delta_ti_tj / tau_unsqueezed)
+            sum_exp_term = exp_t_tj - exp_ti_tj
+            sum_exp_term.mul_(tau)
+            sum_exp_term.mul_(beta)
+            sum_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], sum_exp_term) * self.c[: i, c_i]
+            c_count = torch.count_nonzero(self.c[: i], dim=1).reshape(-1, 1)  # this term can be shared
+            sum_j_integral = torch.sum(sum_exp_term_einsum / c_count)
+            sum_term = sum_term + sum_j_integral
+            # prod term
+            # prod_exp_term = torch.exp(- integral_delta_ti_tj / tau_unsqueezed)
+            # prod_exp_term.mul_(beta)
+            # prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], prod_exp_term) * self.c[: i, c_i]
+            # log_sum_j_prod = torch.sum(prod_exp_term_einsum / c_count)
+            # log_sum_j_prod.log_()
+            # log_prod_term = log_prod_term + log_sum_j_prod
+        log_hawkes_likelihood = - lambda0 * max_t + sum_term
+        # log hawkes likelihood
+        return log_hawkes_likelihood
+
+    def log_hawkes_likelihood_without_prod_term(self, n, lambda0: TENSOR, beta: TENSOR, tau: TENSOR):
+        """
+        log hawkes likelihood based without product terms
+        :param n:
+        :param lambda0:
+        :param beta:
+        :param tau:
+        :return:
+        """
+        tau_unsqueezed = tau.unsqueeze(0)
+        sum_term = torch.tensor(0.).to(self.device)
+        for i in torch.arange(2, n + 1):
+            c_i = torch.argwhere(self.c[i - 1] != 0)[:, 0]  # shared
+            integral_delta_ti_1_tj = self.timestamp_tensor[i - 2] - self.timestamp_tensor[: i - 1]
+            integral_delta_ti_1_tj.unsqueeze_(1)
+            exp_ti_1_tj = torch.exp(- integral_delta_ti_1_tj / tau_unsqueezed)
+            integral_delta_ti_tj = self.timestamp_tensor[i - 1] - self.timestamp_tensor[: i - 1]
+            integral_delta_ti_tj.unsqueeze_(1)
+            exp_ti_tj = torch.exp(- integral_delta_ti_tj / tau_unsqueezed)
+            sum_exp_term = exp_ti_tj - exp_ti_1_tj
+            sum_exp_term.mul_(beta)
+            sum_exp_term.mul_(tau)
+            sum_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], sum_exp_term) * self.c[: i - 1, c_i]
+            kappa_j_count_sum = torch.count_nonzero(self.c[: i - 1], dim=1).reshape(-1, 1)
+            sum_j_integral = torch.sum(sum_exp_term_einsum / kappa_j_count_sum)
+            sum_term = sum_term + sum_j_integral
+        if n == 1:
+            log_hawkes_likelihood = - lambda0 * self.timestamp_tensor[n - 1]
+        else:
+            log_hawkes_likelihood = - lambda0 * self.timestamp_tensor[0] + sum_term
+        return log_hawkes_likelihood
+
     def update_hyperparameter(self, n: int,
                               alpha_lambda0: TENSOR,
                               alpha_beta: TENSOR,
@@ -317,7 +435,8 @@ class Particle:
         tau_candi_prior_log = tau_gamma.log_prob(tau_candi_tensor_mat)
 
         # log hawkes likelihood for each set of samples, so fast now, wuhu~~~~~
-        hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood, n), in_dims=(0, 0, 0))
+        hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood_without_prod_term_my_version, n),
+                                       in_dims=(0, 0, 0))
         log_hawkes_likelihood_tensor = None
         if self.chunk:
             if chunk_size <= 1:
@@ -344,11 +463,14 @@ class Particle:
                                                                    tau_candi_tensor_mat)
         log_weight_tensor = lambda0_candi_prior_log + torch.sum(beta_candi_prior_log, dim=1) + \
                             torch.sum(tau_candi_prior_log, dim=1) + log_hawkes_likelihood_tensor
-        normalized_weight_tensor = softmax(log_weight_tensor, 0)
+        # normalized_weight_tensor = softmax(log_weight_tensor, 0)
+        # avoid overflow
+        normalized_weight_tensor = softmax(log_hawkes_likelihood_tensor - torch.max(log_hawkes_likelihood_tensor), 0)
+        best_100_samples_index = torch.argsort(-normalized_weight_tensor)[: 100]
         # fetch result and update hyperparameter
-        self.lambda0 = normalized_weight_tensor @ lambda0_candi_tensor
-        self.beta = normalized_weight_tensor @ beta_candi_tensor_mat
-        self.tau = normalized_weight_tensor @ tau_candi_tensor_mat
+        self.lambda0 = normalized_weight_tensor[best_100_samples_index] @ lambda0_candi_tensor[best_100_samples_index]
+        self.beta = normalized_weight_tensor[best_100_samples_index] @ beta_candi_tensor_mat[best_100_samples_index, :]
+        self.tau = normalized_weight_tensor[best_100_samples_index] @ tau_candi_tensor_mat[best_100_samples_index, :]
 
     def update_log_particle_weight(self, n, old_particle_weight: TENSOR):
         """
@@ -394,7 +516,7 @@ class StatesFixedParticle(Particle):
 
     def __init__(self, ibhp: IBHPTorch, particle_idx, word_corpus: TENSOR,
                  lambda0: TENSOR, beta: TENSOR, tau: TENSOR,
-                 real_factor_num_seq: TENSOR, chunk: bool):
+                 chunk: bool):
         super(StatesFixedParticle, self).__init__(
             particle_idx=particle_idx,
             text_tensor=ibhp.text,
@@ -402,7 +524,7 @@ class StatesFixedParticle(Particle):
             word_corpus=word_corpus,
             chunk=chunk
         )
-        self.real_factor_num_seq = real_factor_num_seq
+        self.real_factor_num_seq = ibhp.factor_num_tensor
         self.tau = tau.to(self.device)
         self.beta = beta.to(self.device)
         self.lambda0 = lambda0.to(self.device)

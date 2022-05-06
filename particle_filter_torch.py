@@ -12,13 +12,9 @@ import os
 import time
 from copy import deepcopy
 from datetime import datetime
-from tkinter import N
-
 import torch
 import torch.distributions as dist
 from torch.nn.functional import softmax
-
-# from IBHP_simulation import IBHP
 from IBHP_simulation_torch import IBHPTorch
 from particle_torch import Particle, StatesFixedParticle, TENSOR, DEVICE0
 
@@ -75,23 +71,23 @@ class ParticleFilter:
         self.device = device
         self.text_tensor = text_tensor
         self.timestamp_tensor = timestamp_tensor
-        if ibhp_ins:
-            self.true_lambda_tn = ibhp_ins.lambda_tn_tensor
-            self.timestamp_tensor = ibhp_ins.timestamp_tensor
-            self.text_tensor = ibhp_ins.text
+        self.ibhp_ins = ibhp_ins
+        if self.ibhp_ins:
+            self.true_lambda_tn = self.ibhp_ins.lambda_tn_tensor
+            self.timestamp_tensor = self.ibhp_ins.timestamp_tensor
+            self.text_tensor = self.ibhp_ins.text
         # `self.text_tensor` and `self.timestamp_tensor` should not be `None`
         assert isinstance(self.timestamp_tensor, TENSOR)
         assert isinstance(self.text_tensor, TENSOR)
         if states_fixed:
             self.particle_list = [
                 StatesFixedParticle(
-                    ibhp=ibhp_ins,
+                    ibhp=self.ibhp_ins,
                     particle_idx=i,
                     word_corpus=self.word_corpus,
                     lambda0=self.lambda0,
                     beta=self.beta,
                     tau=self.tau,
-                    real_factor_num_seq=ibhp_ins.factor_num_tensor,
                     chunk=chunk) for i in range(self.n_particle)
             ]
         else:
@@ -178,14 +174,12 @@ class ParticleFilter:
             if u <= weight_interval_tensor[nearest_elem_idx]:
                 # remember this step need `deepcopy` because particle is a changeable object
                 sampled_particle = deepcopy(self.particle_list[
-                    ascending_particle_index[nearest_elem_idx]])
+                                                ascending_particle_index[nearest_elem_idx]])
             else:
-                while weight_interval_tensor[
-                        nearest_elem_idx] == weight_interval_tensor[
-                            nearest_elem_idx + 1]:
+                while weight_interval_tensor[nearest_elem_idx] == weight_interval_tensor[nearest_elem_idx + 1]:
                     nearest_elem_idx += 1
                 sampled_particle = deepcopy(self.particle_list[
-                    ascending_particle_index[nearest_elem_idx + 1]])
+                                                ascending_particle_index[nearest_elem_idx + 1]])
             logging.info(f'resample particle {sampled_particle.particle_idx}')
             resampled_particle_list.append(sampled_particle)
         # after resampling, initialize particle weight tensor
@@ -207,6 +201,8 @@ class ParticleFilter:
             torch.save(self.timestamp_tensor,
                        f'{save_dir}/timestamp_tensor.pt')
             torch.save(self.text_tensor, f'{save_dir}/text_tensor.pt')
+            if self.ibhp_ins:
+                torch.save(self.true_lambda_tn, f'{save_dir}/true_lambda_tn.pt')
         # begin to execute filtering step
         avg_lambda0_tensor, avg_beta_tensor, avg_tau_tensor = None, None, None
         for n in torch.arange(1, self.n_sample + 1):
@@ -272,7 +268,7 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
-    n_sample = 100
+    n_sample = 1000
     ibhp = IBHPTorch(n_sample=n_sample,
                      sum_kernel_num=3,
                      word_num=1000,
@@ -280,7 +276,7 @@ if __name__ == '__main__':
                      lambda0=2.,
                      beta=torch.tensor([1., 2., 3.]),
                      tau=torch.tensor([.3, .2, .1]),
-                     random_seed=2)
+                     random_seed=10)
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
 
@@ -314,10 +310,10 @@ if __name__ == '__main__':
                                                alpha_lambda0=torch.tensor(3.),
                                                alpha_beta=torch.tensor(3.),
                                                alpha_tau=torch.tensor(1.5),
-                                               random_num=50,
+                                               random_num=2500,
                                                states_fixed=True,
                                                ibhp_ins=ibhp,
                                                chunk=False)
     start = time.time()
-    pf_states_fixed_particles.filtering(username='test', save_res=False)
+    pf_states_fixed_particles.filtering(username='test', save_res=True)
     print(f'trick time cost: {time.time() - start}')
