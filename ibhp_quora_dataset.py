@@ -67,7 +67,7 @@ def construct_user_event_seq(dataset_save_path: str = './dataset/quora_dataset.c
         le.fit(v)
         user_word_corpus_labeled[k] = le
     # need to save user
-    pickle_save_path = './model_result/pickle_files'
+    pickle_save_path = './dataset/pickle_files'
     if save_as_pickle:
         if not os.path.exists(pickle_save_path):
             os.mkdir(pickle_save_path)
@@ -124,7 +124,7 @@ def construct_user_event_seq(dataset_save_path: str = './dataset/quora_dataset.c
 
 
 # noinspection PyShadowingNames
-def load_pickle_data(pickle_save_path: str = './model_result/pickle_files'):
+def load_pickle_data(pickle_save_path: str = './dataset/pickle_files'):
     with open(f'{pickle_save_path}/user_word_corpus_labeled_100.pkl', 'rb') as f:
         user_word_corpus_labeled_100 = pickle.loads(f.read())
     with open(f'{pickle_save_path}/user_event_seq_100.pkl', 'rb') as f:
