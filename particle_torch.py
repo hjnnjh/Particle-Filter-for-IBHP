@@ -463,9 +463,9 @@ class Particle:
                                                                    tau_candi_tensor_mat)
         log_weight_tensor = lambda0_candi_prior_log + torch.sum(beta_candi_prior_log, dim=1) + \
                             torch.sum(tau_candi_prior_log, dim=1) + log_hawkes_likelihood_tensor
-        # normalized_weight_tensor = softmax(log_weight_tensor, 0)
         # avoid overflow
-        normalized_weight_tensor = softmax(log_hawkes_likelihood_tensor - torch.max(log_hawkes_likelihood_tensor), 0)
+        normalized_weight_tensor = softmax(log_weight_tensor - torch.max(log_weight_tensor), 0)
+        # normalized_weight_tensor = softmax(log_hawkes_likelihood_tensor - torch.max(log_hawkes_likelihood_tensor), 0)
         best_100_samples_index = torch.argsort(-normalized_weight_tensor)[: 100]
         # fetch result and update hyperparameter
         self.lambda0 = normalized_weight_tensor[best_100_samples_index] @ lambda0_candi_tensor[best_100_samples_index]

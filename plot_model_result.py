@@ -57,7 +57,7 @@ def plot_intensity(save_dir: str,
                 alpha=0.5)
         ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'{particle_weight.shape[0]} Particles, First {first_n} Events Average Intensity',
+        ax.set_title(f'{particle_weight.shape[0]} Particles, First {first_n} Events Average Intensity, {custom_title}',
                      fontsize=10)
     if last_n:
         finished_num = average_pred_intensity_array.shape[0]
@@ -77,7 +77,7 @@ def plot_intensity(save_dir: str,
         ax.set_xticks(timestamp_array[:finished_num]
                       [-average_pred_intensity_array.shape[0]:])
         ax.set_xticklabels([])
-        ax.set_title(f'{particle_weight.shape[0]} Particles, Last {last_n} Events Average Intensity',
+        ax.set_title(f'{particle_weight.shape[0]} Particles, Last {last_n} Events Average Intensity, {custom_title}',
                      fontsize=10)
     if not first_n and not last_n:
         ax.plot(timestamp_array[:average_pred_intensity_array.shape[0]],
@@ -230,7 +230,8 @@ def plot_user_lambda_k(save_dir: str, username: str):
     fig.savefig(f'./img/{username}_lambda_k_mat.png')
 
 
-# if __name__ == '__main__':
+if __name__ == '__main__':
+    pass
     # plot_user_intensity(
     #     save_dir='./model_result/model_result_A-Atwood-4_2022_04_29_11_40_51',
     #     username='A-Atwood-4')
@@ -250,7 +251,7 @@ def plot_user_lambda_k(save_dir: str, username: str):
     #     username='A-Atwood-4')
 
     # plot_hyperparameter(
-    #     save_dir='./model_result/model_result_test_2022_05_05_23_52_46',
+    #     save_dir='./model_result/model_result_test_2022_05_06_16_09_05',
     #     true_lambda0=torch.tensor(2.),
     #     true_beta=torch.tensor([1., 2., 3.]),
     #     true_tau=torch.tensor([.3, .2, .1]),
@@ -258,6 +259,7 @@ def plot_user_lambda_k(save_dir: str, username: str):
     # )
     #
     # plot_intensity(
-    #     save_dir='./model_result/model_result_test_2022_05_05_23_52_46',
-    #     last_n=200
+    #     save_dir='./model_result/model_result_test_2022_05_06_16_09_05',
+    #     last_n=200,
+    #     custom_title='weight is likelihood + prior, likelihood only includes integral term'
     # )

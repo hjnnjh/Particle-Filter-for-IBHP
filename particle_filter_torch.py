@@ -192,10 +192,10 @@ class ParticleFilter:
 
     def filtering(self, username: str, save_res: bool = False):
         time4save = datetime.strftime(datetime.now(), '%Y_%m_%d_%H_%M_%S')
-        save_dir = f'./model_result/model_result_{username}_{time4save}'
+        save_dir = f'./model_result/real_data_tensor_res/model_result_{username}_{time4save}'
         if save_res:
-            if not os.path.exists('./model_result/'):
-                os.mkdir('./model_result/')
+            if not os.path.exists('./model_result/real_data_tensor_res'):
+                os.mkdir('./model_result/real_data_tensor_res')
             if not os.path.exists(save_dir):
                 os.mkdir(save_dir)
             torch.save(self.timestamp_tensor,
@@ -314,6 +314,4 @@ if __name__ == '__main__':
                                                states_fixed=True,
                                                ibhp_ins=ibhp,
                                                chunk=False)
-    start = time.time()
     pf_states_fixed_particles.filtering(username='test', save_res=True)
-    print(f'trick time cost: {time.time() - start}')
