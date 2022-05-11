@@ -111,6 +111,46 @@ class IBHPTorch:
             else:
                 continue
 
+    def generate_timestamp_by_thinning_revised(self, n):
+        c_n_nonzero_index = torch.argwhere(self.c[-1] != 0)[:, 0]
+        flag = False
+        if n == 1:
+            old_timestamp = torch.tensor(0.)
+            old_intensity = self.lambda0
+        else:
+            old_timestamp = self.timestamp_tensor[-1]
+            old_intensity = self.lambda_tn_tensor[-1]
+        while not flag:
+            if n == 1:
+                # lambda star means conditional intensity function
+                intensity_upper_bound = old_intensity + torch.sum(self.w[:, c_n_nonzero_index].T @ self.beta)
+                t_n_candidate = old_timestamp + dist.Exponential(intensity_upper_bound).sample()
+                candidate_timestamp_tensor = torch.tensor([t_n_candidate])
+                old_timestamp = t_n_candidate
+            else:
+                intensity_upper_bound = old_intensity + torch.sum(
+                    self.w[:, c_n_nonzero_index].T @ self.beta)
+                t_n_candidate = old_timestamp + dist.Exponential(intensity_upper_bound).sample()
+                candidate_timestamp_tensor = self.timestamp_tensor.clone()
+                candidate_timestamp_tensor = torch.hstack([candidate_timestamp_tensor, t_n_candidate])
+                old_timestamp = t_n_candidate
+            # compute lambda star tn
+            delta_tn = candidate_timestamp_tensor[-1] - candidate_timestamp_tensor
+            kernel_vfunc = vmap(self.base_kernel_l, in_dims=(0, None, None))
+            base_kernel_mat = kernel_vfunc(delta_tn, self.beta, self.tau)
+            kappa_t = torch.einsum('lk,tl->tk', self.w[:, c_n_nonzero_index], base_kernel_mat) * self.c[
+                                                                                                 : delta_tn.shape[0], c_n_nonzero_index]
+            kappa_t_count = torch.count_nonzero(self.c[: delta_tn.shape[0]], dim=1).reshape(-1, 1)
+            lambda_star_tn = torch.sum(kappa_t / kappa_t_count)
+            old_intensity = lambda_star_tn
+            u = dist.Uniform(0, intensity_upper_bound).sample()
+            if u <= lambda_star_tn:
+                if n == 1:
+                    self.timestamp_tensor = torch.tensor([t_n_candidate])
+                else:
+                    self.timestamp_tensor = torch.hstack([self.timestamp_tensor, t_n_candidate])
+                flag = True
+
     def generate_first_event(self):
         while self.K == 0:
             self.K = dist.Poisson(self.lambda0).sample()
@@ -122,7 +162,7 @@ class IBHPTorch:
         self.v = dist.Dirichlet(self.v_0).sample((self.K,)).T
 
         # sample t_1
-        self.generate_timestamp_by_thinning(1)
+        self.generate_timestamp_by_thinning_revised(1)
         multi_dist_prob = torch.einsum('ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / \
                           torch.count_nonzero(self.c[0])
         self.text = dist.Multinomial(self.D, multi_dist_prob).sample()
@@ -157,7 +197,7 @@ class IBHPTorch:
             self.c = torch.vstack([self.c, c_old])
 
         # sample t_n
-        self.generate_timestamp_by_thinning(n)
+        self.generate_timestamp_by_thinning_revised(n)
 
         # sample T_n
         multi_dist_prob = torch.einsum('ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / \
@@ -183,17 +223,18 @@ class IBHPTorch:
 
     def plot_intensity_function(self):
         fig, ax = plt.subplots(dpi=500)
-        ax.plot(self.timestamp_tensor, self.lambda_tn_tensor, color='tomato')
+        ax.plot(self.timestamp_tensor, self.lambda_tn_tensor, color='blue')
         ax.set_xlabel('event')
         ax.set_ylabel(r'$\lambda(t_n)$')
         ax.set_xticks(self.timestamp_tensor)
         ax.set_xticklabels([])
-        plt.show()
+        # plt.show()
+        fig.savefig('./img/simulation_data_intensity.png')
 
 
 if __name__ == "__main__":
     ibhp_ins = IBHPTorch(
-        n_sample=250,
+        n_sample=500,
         random_seed=2,
         doc_len=20,
         word_num=1000,
