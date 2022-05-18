@@ -7,8 +7,9 @@
 @Contact :   jinnan_huang@stu.xjtu.edu.cn
 @Desc    :   None
 """
+from calendar import c
 import logging
-from copy import deepcopy
+import os
 
 import matplotlib.pyplot as plt
 import torch
@@ -20,16 +21,24 @@ from functorch import vmap
 
 # noinspection SpellCheckingInspection,DuplicatedCode
 class IBHPTorch:
-    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
+    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S",
                         level=logging.INFO)
-    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
+    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S",
                         level=logging.WARNING)
     rcParams['font.family'] = 'serif'
     rcParams['font.serif'] = 'Times New Roman'
 
-    def __init__(self, doc_len: int, word_num: int, sum_kernel_num,
-                 lambda0: float, beta: torch.Tensor, tau: torch.Tensor,
-                 n_sample=100, random_seed=None):
+    def __init__(self,
+                 doc_len: int,
+                 word_num: int,
+                 sum_kernel_num,
+                 lambda0: torch.Tensor,
+                 beta: torch.Tensor,
+                 tau: torch.Tensor,
+                 n_sample=100,
+                 random_seed=None):
         self.random_seed = random_seed
         self.n_sample = n_sample
         self.lambda_k_tensor_mat = None
@@ -56,8 +65,8 @@ class IBHPTorch:
             torch.manual_seed(self.random_seed)
 
     @staticmethod
-    def base_kernel_l(delta, beta, tao):
-        base_kernel_l = beta * torch.exp(- delta / tao)
+    def base_kernel_l(delta, beta, tau):
+        base_kernel_l = beta * torch.exp(-delta / tau)
         return base_kernel_l
 
     def calculate_lambda_k(self, n):
@@ -83,20 +92,20 @@ class IBHPTorch:
             if n == 1:
                 lambda_star = self.lambda0
                 u = dist.Uniform(0., 1.).sample()
-                candidate_next_timestamp = - (1 / lambda_star) * torch.log(u)
+                candidate_next_timestamp = -(1 / lambda_star) * torch.log(u)
                 candidate_timestamp_tensor = torch.tensor([candidate_next_timestamp])
             else:
                 lambda_star = self.lambda_tn_tensor[-1]
                 u = dist.Uniform(0., 1.).sample()
-                time_interval = - (1 / lambda_star) * torch.log(u)
+                time_interval = -(1 / lambda_star) * torch.log(u)
                 candidate_next_timestamp = self.timestamp_tensor[-1] + time_interval
                 candidate_timestamp_tensor = self.timestamp_tensor.clone()
                 candidate_timestamp_tensor = torch.hstack([candidate_timestamp_tensor, candidate_next_timestamp])
             delta_t = candidate_timestamp_tensor[-1] - candidate_timestamp_tensor
             kernel_vfunc = vmap(self.base_kernel_l, in_dims=(0, None, None))
             base_kernel_mat = kernel_vfunc(delta_t, self.beta, self.tau)
-            kappa_t = torch.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[: delta_t.shape[0]]
-            kappa_t_count = torch.count_nonzero(self.c[: delta_t.shape[0]], dim=1).reshape(-1, 1)
+            kappa_t = torch.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[:delta_t.shape[0]]
+            kappa_t_count = torch.count_nonzero(self.c[:delta_t.shape[0]], dim=1).reshape(-1, 1)
             lambda_k_tensor = torch.sum(kappa_t / kappa_t_count, dim=0)
             c_t = torch.argwhere(self.c[-1] != 0)[:, 0]
             lambda_t = torch.sum(lambda_k_tensor[c_t])
@@ -128,8 +137,7 @@ class IBHPTorch:
                 candidate_timestamp_tensor = torch.tensor([t_n_candidate])
                 old_timestamp = t_n_candidate
             else:
-                intensity_upper_bound = old_intensity + torch.sum(
-                    self.w[:, c_n_nonzero_index].T @ self.beta)
+                intensity_upper_bound = old_intensity + torch.sum(self.w[:, c_n_nonzero_index].T @ self.beta)
                 t_n_candidate = old_timestamp + dist.Exponential(intensity_upper_bound).sample()
                 candidate_timestamp_tensor = self.timestamp_tensor.clone()
                 candidate_timestamp_tensor = torch.hstack([candidate_timestamp_tensor, t_n_candidate])
@@ -138,9 +146,9 @@ class IBHPTorch:
             delta_tn = candidate_timestamp_tensor[-1] - candidate_timestamp_tensor
             kernel_vfunc = vmap(self.base_kernel_l, in_dims=(0, None, None))
             base_kernel_mat = kernel_vfunc(delta_tn, self.beta, self.tau)
-            kappa_t = torch.einsum('lk,tl->tk', self.w[:, c_n_nonzero_index], base_kernel_mat) * self.c[
-                                                                                                 : delta_tn.shape[0], c_n_nonzero_index]
-            kappa_t_count = torch.count_nonzero(self.c[: delta_tn.shape[0]], dim=1).reshape(-1, 1)
+            kappa_t = torch.einsum('lk,tl->tk', self.w[:, c_n_nonzero_index],
+                                   base_kernel_mat) * self.c[:delta_tn.shape[0], c_n_nonzero_index]
+            kappa_t_count = torch.count_nonzero(self.c[:delta_tn.shape[0]], dim=1).reshape(-1, 1)
             lambda_star_tn = torch.sum(kappa_t / kappa_t_count)
             old_intensity = lambda_star_tn
             u = dist.Uniform(0, intensity_upper_bound).sample()
@@ -158,13 +166,13 @@ class IBHPTorch:
         self.K = self.K.int()
         self.c = torch.ones((1, self.K))
 
-        self.w = dist.Dirichlet(self.w_0).sample((self.K,)).T
-        self.v = dist.Dirichlet(self.v_0).sample((self.K,)).T
+        self.w = dist.Dirichlet(self.w_0).sample((self.K, )).T
+        self.v = dist.Dirichlet(self.v_0).sample((self.K, )).T
 
         # sample t_1
         self.generate_timestamp_by_thinning_revised(1)
-        multi_dist_prob = torch.einsum('ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / \
-                          torch.count_nonzero(self.c[0])
+        multi_dist_prob = torch.einsum(
+            'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[0])
         self.text = dist.Multinomial(self.D, multi_dist_prob).sample()
 
         # compute lambda_1
@@ -189,9 +197,9 @@ class IBHPTorch:
             self.c = torch.hstack([self.c, torch.zeros([self.c.shape[0], k_plus])])
             self.c = torch.vstack([self.c, c])
 
-            w_new = dist.Dirichlet(self.w_0).sample((k_plus,)).T
+            w_new = dist.Dirichlet(self.w_0).sample((k_plus, )).T
             self.w = torch.hstack([self.w, w_new])
-            v_new = dist.Dirichlet(self.v_0).sample((k_plus,)).T
+            v_new = dist.Dirichlet(self.v_0).sample((k_plus, )).T
             self.v = torch.hstack([self.v, v_new])
         else:
             self.c = torch.vstack([self.c, c_old])
@@ -200,18 +208,17 @@ class IBHPTorch:
         self.generate_timestamp_by_thinning_revised(n)
 
         # sample T_n
-        multi_dist_prob = torch.einsum('ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / \
-                          torch.count_nonzero(self.c[n - 1])
+        multi_dist_prob = torch.einsum(
+            'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[n - 1])
         text_n = dist.Multinomial(self.D, multi_dist_prob).sample()
         self.text = torch.vstack([self.text, text_n])
 
         # compute lambda_k
         self.calculate_lambda_k(n)
         c_n = torch.argwhere(self.c[-1] != 0)[:, 0]
-        self.lambda_tn_tensor = torch.hstack([self.lambda_tn_tensor,
-                                              torch.sum(self.lambda_k_tensor[c_n])])
+        self.lambda_tn_tensor = torch.hstack([self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n])])
 
-    def generate_data(self):
+    def generate_data(self, save_result=False, save_path: str = None):
         logging.info('Begin generating simulation data')
         for i in torch.arange(1, self.n_sample + 1):
             if i == 1:
@@ -220,9 +227,21 @@ class IBHPTorch:
                 self.generate_following_event(i)
         logging.info(f'timestamp: \n{self.timestamp_tensor}')
         logging.info(f'text: \n{self.text}')
+        if save_result and save_path:
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
+            torch.save(self.w, f'{save_path}/w.pt')
+            torch.save(self.v, f'{save_path}/v.pt')
+            torch.save(self.c, f'{save_path}/c.pt')
+            torch.save(self.timestamp_tensor, f'{save_path}/timestamp.pt')
+            torch.save(self.text, f'{save_path}/text.pt')
+            torch.save(self.lambda_tn_tensor, f'{save_path}/lambda_tn.pt')
+            torch.save(self.factor_num_tensor, f'{save_path}/factor_num.pt')
+            logging.info(f'Data saved to {save_path}')
+        logging.info('End generating simulation data')
 
     def plot_intensity_function(self):
-        fig, ax = plt.subplots(dpi=500)
+        fig, ax = plt.subplots(figsize=(26, 5), dpi=400)
         ax.plot(self.timestamp_tensor, self.lambda_tn_tensor, color='blue')
         ax.set_xlabel('event')
         ax.set_ylabel(r'$\lambda(t_n)$')
@@ -230,18 +249,30 @@ class IBHPTorch:
         ax.set_xticklabels([])
         # plt.show()
         fig.savefig('./img/simulation_data_intensity.png')
+        plt.close('all')
+
+    def plot_simulation_c_matrix(self):
+        fig, ax = plt.subplots(dpi=400)
+        ms = ax.matshow(self.c, cmap='YlGnBu')
+        ax.set_ylabel('event')
+        ax.set_xlabel('factors')
+        fig.colorbar(ms, ax=ax)
+        fig.tight_layout()
+        fig.savefig('./img/simulation_data_c_matrix.png')
+        plt.close('all')
 
 
 if __name__ == "__main__":
     ibhp_ins = IBHPTorch(
-        n_sample=500,
+        n_sample=250,
         random_seed=2,
         doc_len=20,
         word_num=1000,
         sum_kernel_num=3,
-        lambda0=2.,
+        lambda0=torch.tensor(5.),
         beta=torch.tensor([1., 2., 3.]),
         tau=torch.tensor([.3, .2, .1]),
     )
-    ibhp_ins.generate_data()
+    ibhp_ins.generate_data(save_result=True, save_path='./model_result/simulation_data')
     ibhp_ins.plot_intensity_function()
+    ibhp_ins.plot_simulation_c_matrix()

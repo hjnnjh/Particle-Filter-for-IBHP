@@ -11,14 +11,12 @@
 import os
 import re
 import pickle
-from typing import OrderedDict
 from tqdm import tqdm
 from wordcloud import WordCloud
 from typing import Dict
 from sklearn.preprocessing import LabelEncoder
 
 import matplotlib.pyplot as plt
-from matplotlib import cm
 import numpy as np
 import torch
 from matplotlib import rcParams
@@ -30,26 +28,16 @@ rcParams['font.serif'] = 'Times New Roman'
 
 
 # noinspection DuplicatedCode
-def plot_intensity(save_dir: str,
-                   last_n: int = None,
-                   first_n: int = None,
-                   custom_title=None):
-    true_intensity = torch.load(f'{save_dir}/true_lambda_tn.pt',
-                                map_location='cpu').numpy()
-    particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt',
-                                 map_location='cpu').numpy()
-    timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt',
-                                 map_location='cpu').numpy()
+def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, custom_title=None):
+    true_intensity = torch.load(f'{save_dir}/true_lambda_tn.pt', map_location='cpu').numpy()
+    particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt', map_location='cpu').numpy()
+    timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt', map_location='cpu').numpy()
     pred_intensity_array = np.array([
-        torch.load(f'{save_dir}/{filename}/lambda_tn_tensor.pt',
-                   map_location='cpu').numpy()
-        for filename in os.listdir(f'{save_dir}')
-        if os.path.isdir(f'{save_dir}/{filename}')
+        torch.load(f'{save_dir}/{filename}/lambda_tn_tensor.pt', map_location='cpu').numpy()
+        for filename in os.listdir(f'{save_dir}') if os.path.isdir(f'{save_dir}/{filename}')
     ])
-    fig, ax = plt.subplots(dpi=400)
-    average_pred_intensity_array = np.average(pred_intensity_array,
-                                              weights=particle_weight,
-                                              axis=0)
+    fig, ax = plt.subplots(dpi=400, figsize=(26, 5))
+    average_pred_intensity_array = np.average(pred_intensity_array, weights=particle_weight, axis=0)
     if first_n:
         average_pred_intensity_array = average_pred_intensity_array[:first_n]
         ax.plot(timestamp_array[:average_pred_intensity_array.shape[0]],
@@ -69,24 +57,19 @@ def plot_intensity(save_dir: str,
     if last_n:
         finished_num = average_pred_intensity_array.shape[0]
         average_pred_intensity_array = average_pred_intensity_array[-last_n:]
-        ax.plot(timestamp_array[:finished_num]
-                [-average_pred_intensity_array.shape[0]:],
-                true_intensity[:finished_num]
-                [-average_pred_intensity_array.shape[0]:],
+        ax.plot(timestamp_array[:finished_num][-average_pred_intensity_array.shape[0]:],
+                true_intensity[:finished_num][-average_pred_intensity_array.shape[0]:],
                 color='r',
                 label='True')
-        ax.plot(timestamp_array[:finished_num]
-                [-average_pred_intensity_array.shape[0]:],
+        ax.plot(timestamp_array[:finished_num][-average_pred_intensity_array.shape[0]:],
                 average_pred_intensity_array,
                 color='b',
                 label='Pred',
                 alpha=0.5)
-        ax.set_xticks(timestamp_array[:finished_num]
-                      [-average_pred_intensity_array.shape[0]:])
+        ax.set_xticks(timestamp_array[:finished_num][-average_pred_intensity_array.shape[0]:])
         ax.set_xticklabels([])
-        ax.set_title(
-            f'{particle_weight.shape[0]} Particles, Last {last_n} Events Average Intensity, {custom_title}',
-            fontsize=10)
+        ax.set_title(f'{particle_weight.shape[0]} Particles, Last {last_n} Events Average Intensity, {custom_title}',
+                     fontsize=10)
     if not first_n and not last_n:
         ax.plot(timestamp_array[:average_pred_intensity_array.shape[0]],
                 true_intensity[:average_pred_intensity_array.shape[0]],
@@ -99,27 +82,20 @@ def plot_intensity(save_dir: str,
                 alpha=0.5)
         ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(
-            f'{particle_weight.shape[0]} Particles, Average Intensity, {custom_title}'
-        )
+        ax.set_title(f'{particle_weight.shape[0]} Particles, Average Intensity, {custom_title}', fontsize=10)
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
     plt.show()
+    fig.savefig('./img/intensity_res.png')
+    print('Intensity Plot Saved')
     plt.close('all')
 
 
-def plot_hyperparameter(save_dir: str,
-                        true_lambda0: TENSOR,
-                        true_beta: TENSOR,
-                        true_tau: TENSOR,
-                        last_n: int = None):
-    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt',
-                                    map_location='cpu').numpy()
-    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt',
-                                 map_location='cpu').numpy()
-    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt',
-                                map_location='cpu').numpy()
+def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, true_tau: TENSOR, last_n: int = None):
+    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()
+    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
+    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
     if last_n:
         pred_lambda0_array = pred_lambda0_array[-last_n:]
         pred_beta_array = pred_beta_array[-last_n:]
@@ -138,35 +114,33 @@ def plot_hyperparameter(save_dir: str,
     fig.delaxes(ax[2][2])
     x = np.arange(event_num)
     for i in np.arange(3):
-        ax[0][i].plot(x, true_beta[:, i], color='r')
-        ax[0][i].plot(x, pred_beta_array[:, i], color='b', alpha=0.5)
-        ax[0][i].set_title(fr'$\beta_{i + 1}$')
-        ax[1][i].plot(x, true_tau[:, i], color='r')
-        ax[1][i].plot(x, pred_tau_array[:, i], color='b', alpha=0.5)
-        ax[1][i].set_title(fr'$\tau_{i + 1}$')
+        try:
+            ax[0][i].plot(x, true_beta[:, i], color='r')
+            ax[0][i].plot(x, pred_beta_array[:, i], color='b', alpha=0.5)
+            ax[0][i].set_title(fr'$\beta_{i + 1}$')
+            ax[1][i].plot(x, true_tau[:, i], color='r')
+            ax[1][i].plot(x, pred_tau_array[:, i], color='b', alpha=0.5)
+            ax[1][i].set_title(fr'$\tau_{i + 1}$')
+        except IndexError:
+            continue
     ax[2][0].plot(x, true_lambda0, color='r')
     ax[2][0].plot(x, pred_lambda0_array, color='b', alpha=0.5)
     ax[2][0].set_title(r'$\lambda_0$')
     fig.tight_layout()
     plt.show()
+    fig.savefig('./img/hyperparameter_res.png')
     plt.close('all')
 
 
 def plot_user_intensity(save_dir: str, username: str):
     intensity_array = np.array([
-        torch.load(f'{save_dir}/{filename}/lambda_tn_tensor.pt',
-                   map_location='cpu').numpy()
-        for filename in os.listdir(f'{save_dir}')
-        if os.path.isdir(f'{save_dir}/{filename}')
+        torch.load(f'{save_dir}/{filename}/lambda_tn_tensor.pt', map_location='cpu').numpy()
+        for filename in os.listdir(f'{save_dir}') if os.path.isdir(f'{save_dir}/{filename}')
     ])
-    particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt',
-                                 map_location='cpu').numpy()
-    timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt',
-                                 map_location='cpu').numpy()
+    particle_weight = torch.load(f'{save_dir}/particle_weight_tensor.pt', map_location='cpu').numpy()
+    timestamp_array = torch.load(f'{save_dir}/timestamp_tensor.pt', map_location='cpu').numpy()
     fig, ax = plt.subplots(dpi=400)
-    average_pred_intensity_array = np.average(intensity_array,
-                                              weights=particle_weight,
-                                              axis=0)
+    average_pred_intensity_array = np.average(intensity_array, weights=particle_weight, axis=0)
     ax.plot(timestamp_array[:average_pred_intensity_array.shape[0]],
             average_pred_intensity_array,
             color='b',
@@ -174,9 +148,7 @@ def plot_user_intensity(save_dir: str, username: str):
             alpha=0.5)
     ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
     ax.set_xticklabels([])
-    ax.set_title(
-        f'10 Particles, {username} Average Intensity, event num = {timestamp_array.shape[0]}'
-    )
+    ax.set_title(f'10 Particles, {username} Average Intensity, event num = {timestamp_array.shape[0]}')
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
@@ -187,12 +159,9 @@ def plot_user_intensity(save_dir: str, username: str):
 
 
 def plot_user_hyperparameter(save_dir: str, username: str):
-    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt',
-                                    map_location='cpu').numpy()
-    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt',
-                                 map_location='cpu').numpy()
-    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt',
-                                map_location='cpu').numpy()
+    pred_lambda0_array = torch.load(f'{save_dir}/avg_lambda0_tensor.pt', map_location='cpu').numpy()
+    pred_beta_array = torch.load(f'{save_dir}/avg_beta_tensor.pt', map_location='cpu').numpy()
+    pred_tau_array = torch.load(f'{save_dir}/avg_tau_tensor.pt', map_location='cpu').numpy()
     print(f'avg lambda0: {np.average(pred_lambda0_array)}')
     print(f'avg beta: {np.average(pred_beta_array, axis=0)}')
     print(f'avg tau: {np.average(pred_tau_array, axis=0)}')
@@ -235,11 +204,8 @@ def construct_lambda_k_mat(particle_path: str):
     for pt_filename in os.listdir(particle_path):
         if 'lambda_k' in pt_filename:
             event_str = re.search(r'(.+)(event.+)(\.pt)', pt_filename)[2]
-            lambda_k_file_dict[event_str] = torch.load(
-                f'{particle_path}/{pt_filename}', map_location='cpu').numpy()
-    sorted_lambda_k_list = sorted(
-        lambda_k_file_dict.items(),
-        key=lambda d: int(re.search(r'event_(\d+)', d[0])[1]))
+            lambda_k_file_dict[event_str] = torch.load(f'{particle_path}/{pt_filename}', map_location='cpu').numpy()
+    sorted_lambda_k_list = sorted(lambda_k_file_dict.items(), key=lambda d: int(re.search(r'event_(\d+)', d[0])[1]))
     v_max_length = sorted_lambda_k_list[-1][1].shape[0]
     new_lambda_k_list = []
     for k, v in sorted_lambda_k_list:
@@ -264,12 +230,7 @@ def plot_user_lambda_k(particle_path: str, username: str):
     plt.close('all')
 
 
-def visualize_user_factors(save_path: str, user_name: str):
-    pass
-
-
-def visualize_factor_word_cloud(v_mat_path: str, user_name: str,
-                                particle_path: str,
+def visualize_factor_word_cloud(v_mat_path: str, user_name: str, particle_path: str,
                                 user_word_corpus: Dict[str, LabelEncoder]):
     word_classes = user_word_corpus[user_name].classes_
     print(f'[{user_name}] word corpus: {word_classes}\nlength: {len(word_classes)}')
@@ -277,21 +238,19 @@ def visualize_factor_word_cloud(v_mat_path: str, user_name: str,
     c_mat = torch.load(f'{particle_path}/c.pt', map_location='cpu').numpy()
     c_mat_count_vert = np.count_nonzero(c_mat, axis=0)
     # descending sorted by count numbers
-    c_mat_count_vert_descending_index = np.argsort(
-        -c_mat_count_vert)
-    wd = WordCloud(
-        background_color='white',
-        width=1920,
-        height=1080,
-        max_words=200,
-        font_path='/usr/share/fonts/PingFang-SC-Regular.ttf',
-        relative_scaling=0
-    )
+    c_mat_count_vert_descending_index = np.argsort(-c_mat_count_vert)
+    wd = WordCloud(background_color='white',
+                   width=1920,
+                   height=1080,
+                   max_words=200,
+                   font_path='/usr/share/fonts/PingFang-SC-Regular.ttf',
+                   relative_scaling=0)
     fig, ax = plt.subplots(dpi=400)
     print('plotting factor word cloud:')
     for idx in tqdm(c_mat_count_vert_descending_index):
         wd_gen = wd.generate_from_frequencies(
-            {word_classes[i]: v_mat[i, idx] * np.power(10, 38) for i in np.arange(v_mat.shape[0])})
+            {word_classes[i]: v_mat[i, idx] * np.power(10, 38)
+             for i in np.arange(v_mat.shape[0])})
         ax.imshow(wd_gen, interpolation='bilinear')
         ax.axis('off')
         fig.tight_layout()
@@ -299,43 +258,41 @@ def visualize_factor_word_cloud(v_mat_path: str, user_name: str,
             os.mkdir(f'./img/{user_name}')
         if not os.path.exists(f'./img/{user_name}/wordcloud'):
             os.mkdir(f'./img/{user_name}/wordcloud')
-        fig.savefig(f'./img/{user_name}/wordcloud/{user_name}_wordcloud_factor_occurrence_{c_mat_count_vert[idx]}_descending_factor_{idx}.png')
+        fig.savefig(f'./img/{user_name}/wordcloud/'
+                    f'{user_name}_wordcloud_factor_occurrence_{c_mat_count_vert[idx]}_descending_factor_{idx}.png')
         ax.clear()
     plt.close('all')
 
+    def plot_real_data_res():
+        tensor_res_path = './model_result/real_data_tensor_res'
+        pickle_res_path = './model_result/real_data_pickle_res'
+
+        with open('./dataset/pickle_files/user_word_corpus_labeled_100.pkl', 'rb') as f:
+            user_word_corpus_labeled_100 = pickle.loads(f.read())
+
+        with open('./dataset/pickle_files/user_event_seq_100.pkl', 'rb') as f:
+            user_event_seq_100 = pickle.loads(f.read())
+
+        user_tensor_path_ls = [
+            f'{tensor_res_path}/{folder}' for folder in os.listdir(tensor_res_path)
+            if os.path.isdir(f'{tensor_res_path}/{folder}')
+        ]
+
+        print('plotting model result for each user:')
+        for user_tensor_path in tqdm(user_tensor_path_ls):
+            user_name = re.search(r'(./model_result/real_data_tensor_res/model_result_)(.+?)(_2022*)',
+                                  user_tensor_path)[2]
+            # plot_user_c(save_dir=f'{user_tensor_path}/particle-0',
+            #             username=user_name)
+            # plot_user_lambda_k(save_dir=f'{user_tensor_path}/particle-0',
+            #                    username=user_name)
+            visualize_factor_word_cloud(v_mat_path=f'{user_tensor_path}/particle-0/v.pt',
+                                        user_name=user_name,
+                                        particle_path=f'{user_tensor_path}/particle-0',
+                                        user_word_corpus=user_word_corpus_labeled_100)
+
 
 if __name__ == '__main__':
-    tensor_res_path = './model_result/real_data_tensor_res'
-    pickle_res_path = './model_result/real_data_pickle_res'
-
-    with open('./dataset/pickle_files/user_word_corpus_labeled_100.pkl',
-              'rb') as f:
-        user_word_corpus_labeled_100 = pickle.loads(f.read())
-
-    with open('./dataset/pickle_files/user_event_seq_100.pkl', 'rb') as f:
-        user_event_seq_100 = pickle.loads(f.read())
-
-    user_tensor_path_ls = [
-        f'{tensor_res_path}/{folder}' for folder in os.listdir(tensor_res_path)
-        if os.path.isdir(f'{tensor_res_path}/{folder}')
-    ]
-
-    print('plotting model result for each user:')
-    for user_tensor_path in tqdm(user_tensor_path_ls):
-        user_name = re.search(
-            r'(./model_result/real_data_tensor_res/model_result_)(.+?)(_2022*)',
-            user_tensor_path)[2]
-        # plot_user_c(save_dir=f'{user_tensor_path}/particle-0',
-        #             username=user_name)
-        # plot_user_lambda_k(save_dir=f'{user_tensor_path}/particle-0',
-        #                    username=user_name)
-        visualize_factor_word_cloud(
-            v_mat_path=f'{user_tensor_path}/particle-0/v.pt',
-            user_name=user_name,
-            particle_path=f'{user_tensor_path}/particle-0',
-            user_word_corpus=user_word_corpus_labeled_100
-        )
-
     # visualize_factor_word_cloud(
     #     v_mat_path='./model_result/real_data_tensor_res/model_result_9000-1_2022_05_06_22_14_54/particle-0/v.pt',
     #     user_name='9000-1',
@@ -361,16 +318,11 @@ if __name__ == '__main__':
     #     './model_result/real_data_tensor_res/model_result_A-v-d-Grinten_2022_05_07_00_00_54/particle-0',
     #     username='A-v-d-Grinten')
 
-    # plot_hyperparameter(
-    #     save_dir='./model_result/model_result_test_2022_05_06_16_09_05',
-    #     true_lambda0=torch.tensor(2.),
-    #     true_beta=torch.tensor([1., 2., 3.]),
-    #     true_tau=torch.tensor([.3, .2, .1]),
-    #     last_n=200
-    # )
-    #
-    # plot_intensity(
-    #     save_dir='./model_result/model_result_test_2022_05_06_16_09_05',
-    #     last_n=200,
-    #     custom_title='weight is likelihood + prior, likelihood only includes integral term'
-    # )
+    # plot_hyperparameter(save_dir='./model_result/test_tensor_result/test_2022_05_12_17_59_14',
+    #                     true_lambda0=torch.tensor(2.),
+    #                     true_beta=torch.tensor([1., 2., 3.]),
+    #                     true_tau=torch.tensor([.3, .2, .1]))
+
+    plot_intensity(save_dir='./model_result/test_tensor_result/test_2022_05_17_15_41_10',
+                   last_n=500,
+                   custom_title='params fixed')
