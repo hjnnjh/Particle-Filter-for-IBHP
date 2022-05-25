@@ -137,3 +137,4 @@ img*/
 pyro_sample.py
 model_result/
 nips-dataset/
+.DS_Store
