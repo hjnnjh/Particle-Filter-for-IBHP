@@ -8,18 +8,20 @@
 @Contact :   jinnan_huang@stu.xjtu.edu.cn
 @Desc    :   None
 """
+import logging
 import os
-import re
 import pickle
-from tqdm import tqdm
-from wordcloud import WordCloud
+import re
+from cmath import log
 from typing import Dict
-from sklearn.preprocessing import LabelEncoder
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib import rcParams
+from sklearn.preprocessing import LabelEncoder
+from tqdm import tqdm
+from wordcloud import WordCloud
 
 from particle_filter_torch import TENSOR
 
@@ -82,13 +84,29 @@ def plot_intensity(save_dir: str, last_n: int = None, first_n: int = None, custo
                 alpha=0.5)
         ax.set_xticks(timestamp_array[:average_pred_intensity_array.shape[0]])
         ax.set_xticklabels([])
-        ax.set_title(f'{particle_weight.shape[0]} Particles, Average Intensity, {custom_title}', fontsize=10)
+        ax.set_title(
+            f'{particle_weight.shape[0]} Particles, {average_pred_intensity_array.shape[0]} Events, Average Intensity, {custom_title}',
+            fontsize=10)
     ax.set_ylabel(r'$\lambda(t_n)$')
     ax.legend()
     fig.tight_layout()
     plt.show()
     fig.savefig('./img/intensity_res.png')
-    print('Intensity Plot Saved')
+    print('Intensity Plot Save to ./img/intensity_res.png')
+    plt.close('all')
+
+
+def plot_c(simulation_c_path: str, particle_c_path: str):
+    simu_c = torch.load(simulation_c_path, map_location='cpu')
+    particle_c = torch.load(particle_c_path, map_location='cpu')
+    fig, ax = plt.subplots(1, 2, dpi=400)
+    ax[0].matshow(simu_c, cmap='YlGnBu')
+    ax[1].matshow(particle_c, cmap='YlGnBu')
+    ax[0].set_title('Simulation c')
+    ax[1].set_title('Particle c')
+    fig.tight_layout()
+    fig.savefig('./img/c_res.png')
+    logging.info('C Plot Save to ./img/c_res.png')
     plt.close('all')
 
 
@@ -109,26 +127,54 @@ def plot_hyperparameter(save_dir: str, true_lambda0: TENSOR, true_beta: TENSOR, 
     true_lambda0 = true_lambda0.repeat(event_num).numpy()
     true_beta = true_beta.repeat(event_num, 1).numpy()
     true_tau = true_tau.repeat(event_num, 1).numpy()
-    fig, ax = plt.subplots(3, 3, dpi=400)
-    fig.delaxes(ax[2][1])
-    fig.delaxes(ax[2][2])
+
+    # lambda0
+    fig, ax = plt.subplots(dpi=400, figsize=(26, 5))
     x = np.arange(event_num)
-    for i in np.arange(3):
-        try:
-            ax[0][i].plot(x, true_beta[:, i], color='r')
-            ax[0][i].plot(x, pred_beta_array[:, i], color='b', alpha=0.5)
-            ax[0][i].set_title(fr'$\beta_{i + 1}$')
-            ax[1][i].plot(x, true_tau[:, i], color='r')
-            ax[1][i].plot(x, pred_tau_array[:, i], color='b', alpha=0.5)
-            ax[1][i].set_title(fr'$\tau_{i + 1}$')
-        except IndexError:
-            continue
-    ax[2][0].plot(x, true_lambda0, color='r')
-    ax[2][0].plot(x, pred_lambda0_array, color='b', alpha=0.5)
-    ax[2][0].set_title(r'$\lambda_0$')
+    ax.plot(x, true_lambda0, color='r', label='True')
+    ax.plot(x, pred_lambda0_array, color='b', label='Pred', alpha=0.5, linewidth=5)
+    ax.legend()
+    ax.set_xlabel('Event Number')
+    ax.set_ylabel(r'$\lambda_0$')
     fig.tight_layout()
-    plt.show()
-    fig.savefig('./img/hyperparameter_res.png')
+    fig.savefig('./img/lambda0_res.png')
+    logging.info(f'Lambda0 Plot Save to ./img/lambda0_res.png')
+    plt.close('all')
+
+    # beta
+    beta_num = true_beta.shape[1]
+    fig, ax = plt.subplots(beta_num, 1, dpi=400, figsize=(26, 5))
+    if isinstance(ax, list):
+        ax.flatten()
+    else:
+        ax = [ax]
+    for i in range(beta_num):
+        ax[i].plot(x, true_beta[:, i], color='r', label='True')
+        ax[i].plot(x, pred_beta_array[:, i], color='b', label='Pred', alpha=0.5, linewidth=5)
+        ax[i].legend()
+        ax[i].set_xlabel('Event Number')
+        ax[i].set_ylabel(fr'$\beta_{i}$')
+    fig.tight_layout()
+    fig.savefig('./img/beta_res.png')
+    logging.info(f'Beta Plot Save to ./img/beta_res.png')
+    plt.close('all')
+
+    # tau
+    tau_num = true_tau.shape[1]
+    fig, ax = plt.subplots(tau_num, 1, dpi=400, figsize=(26, 5))
+    if isinstance(ax, list):
+        ax.flatten()
+    else:
+        ax = [ax]
+    for i in range(tau_num):
+        ax[i].plot(x, true_tau[:, i], color='r', label='True')
+        ax[i].plot(x, pred_tau_array[:, i], color='b', label='Pred', alpha=0.5, linewidth=5)
+        ax[i].legend()
+        ax[i].set_xlabel('Event Number')
+        ax[i].set_ylabel(fr'$\tau_{i}$')
+    fig.tight_layout()
+    fig.savefig('./img/tau_res.png')
+    logging.info(f'Tau Plot Save to ./img/tau_res.png')
     plt.close('all')
 
 
@@ -155,6 +201,7 @@ def plot_user_intensity(save_dir: str, username: str):
     if not os.path.exists(f'./img/{username}'):
         os.mkdir(f'./img/{username}')
     fig.savefig(f'./img/{username}/{username}_intensity.png')
+    logging.info(f'{username} intensity plot save to ./img/{username}/{username}_intensity.png')
     plt.close('all')
 
 
@@ -196,6 +243,7 @@ def plot_user_c(save_dir: str, username: str):
     if not os.path.exists(f'./img/{username}'):
         os.mkdir(f'./img/{username}')
     fig.savefig(f'./img/{username}/{username}_c_mat.png')
+    logging.info(f'{username} c_mat save to ./img/{username}/{username}_c_mat.png')
     plt.close('all')
 
 
@@ -308,21 +356,19 @@ if __name__ == '__main__':
     #     save_dir='./model_result/model_result_A-Atwood-4_2022_04_29_11_40_51',
     #     username='A-Atwood-4')
 
-    # plot_user_c(
-    #     save_dir=
-    #     './model_result/real_data_tensor_res/model_result_A-v-d-Grinten_2022_05_07_00_00_54/particle-0',
-    #     username='A-v-d-Grinten')
+    # plot_user_c(save_dir='./model_result/test_tensor_result/test_2022_05_25_20_59_14/particle-0', username='test')
 
     # plot_user_lambda_k(
     #     save_dir=
     #     './model_result/real_data_tensor_res/model_result_A-v-d-Grinten_2022_05_07_00_00_54/particle-0',
     #     username='A-v-d-Grinten')
 
-    # plot_hyperparameter(save_dir='./model_result/test_tensor_result/test_2022_05_12_17_59_14',
-    #                     true_lambda0=torch.tensor(2.),
-    #                     true_beta=torch.tensor([1., 2., 3.]),
-    #                     true_tau=torch.tensor([.3, .2, .1]))
+    plot_hyperparameter(save_dir='./model_result/test_tensor_result/test_2022_05_31_21_55_23',
+                        true_lambda0=torch.tensor(2.),
+                        true_beta=torch.tensor([3.]),
+                        true_tau=torch.tensor([.1]))
 
-    plot_intensity(save_dir='./model_result/test_tensor_result/test_2022_05_17_15_41_10',
-                   last_n=500,
-                   custom_title='params fixed')
+    plot_intensity(save_dir='./model_result/test_tensor_result/test_2022_05_31_21_55_23', custom_title='states fixed')
+
+    plot_c(simulation_c_path='model_result/simulation_data/c.pt',
+           particle_c_path='model_result/test_tensor_result/test_2022_05_31_21_55_23/particle-50/c.pt')

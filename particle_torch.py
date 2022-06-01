@@ -9,7 +9,6 @@
 @Desc    :   None
 """
 import logging
-import time
 from functools import partial
 
 import numpy as np
@@ -118,8 +117,8 @@ class Particle:
             self.lambda_k_tensor = self.w.T @ self.beta
         else:
             delta_t_tensor = self.timestamp_tensor[n - 1] - self.timestamp_tensor[:n]
-            exp_kernel_vfunc = vmap(self.exp_kernel, in_dims=(0, None, None))
-            exp_kernel_mat = exp_kernel_vfunc(delta_t_tensor, self.beta, self.tau)
+            delta_t_tensor.unsqueeze_(1)
+            exp_kernel_mat = self.exp_kernel(delta_t_tensor, self.beta, self.tau)
             kappa_history = torch.einsum('lk,tl->tk', self.w, exp_kernel_mat) * self.c
             kappa_history_count = torch.count_nonzero(self.c, dim=1).reshape(-1, 1)
             self.lambda_k_tensor = torch.sum(kappa_history / kappa_history_count, dim=0)
@@ -180,7 +179,7 @@ class Particle:
         # compute lambda_k_1
         self.calculate_lambda_k(1)
         c_1 = torch.argwhere(self.c[0] != 0)[:, 0]
-        self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_1].reshape(1, -1), dim=1)
+        self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_1].reshape(1, -1), dim=1) + self.lambda0
         logging.info(f'[event 1, particle {self.particle_idx}] factor occurence(c) shape: {self.c.shape}')
         # self.collect_factor_intensity(1)
         # logging.info(f'[event 1, particle {particle_idx + 1}] lambda k shape: {self.lambda_k_tensor_mat.shape}\n')
@@ -229,11 +228,13 @@ class Particle:
         # compute lambda_tn_k, lambda_tn
         self.calculate_lambda_k(n)
         c_n = torch.argwhere(self.c[n - 1] != 0)[:, 0]
-        self.lambda_tn_tensor = torch.hstack((self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n])))
+        self.lambda_tn_tensor = torch.hstack(
+            (self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n]) + self.lambda0))
         logging.info(f'[event {n}, particle {self.particle_idx}] factor occurence(c) shape: {self.c.shape}')
         # self.collect_factor_intensity(n)
         # logging.info(f'[event {n}, particle {particle_idx + 1}] lambda k shape: {self.lambda_k_tensor_mat.shape}\n')
 
+    # --------------- multiple version of the log likelihood functions -----------------
     def log_hawkes_likelihood(self, n, lambda0: TENSOR, beta: TENSOR, tau: TENSOR):
         """
         log hawkes likelihood for IBHP
@@ -256,7 +257,7 @@ class Particle:
                 prod_exp_term.mul_(beta)
                 prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_1], prod_exp_term) * self.c[:i, c_1]
                 kappa_j_count_prod = torch.count_nonzero(self.c[:i], dim=1).reshape(-1, 1)
-                log_sum_1_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
+                log_sum_1_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod) + lambda0
                 log_sum_1_prod.log_()
                 log_prod_term = log_prod_term + log_sum_1_prod
             else:
@@ -283,14 +284,14 @@ class Particle:
                 prod_exp_term.mul_(beta)
                 prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w[:, c_i], prod_exp_term) * self.c[:i, c_i]
                 kappa_j_count_prod = torch.count_nonzero(self.c[:i], dim=1).reshape(-1, 1)
-                log_sum_j_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
+                log_sum_j_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod) + lambda0
                 log_sum_j_prod.log_()
                 log_prod_term = log_prod_term + log_sum_j_prod
 
         if n == 1:
-            log_integral_term = -lambda0 * self.timestamp_tensor[0]
+            log_integral_term = -lambda0 * self.timestamp_tensor[n - 1]
         else:
-            log_integral_term = -lambda0 * self.timestamp_tensor[0] + sum_term
+            log_integral_term = -lambda0 * self.timestamp_tensor[n - 1] + sum_term
 
         # log hawkes likelihood
         log_hawkes_likelihood = log_integral_term + log_prod_term
@@ -317,13 +318,13 @@ class Particle:
             prod_exp_term.mul_(beta)
             prod_exp_term_einsum = torch.einsum('lk,tl->tk', self.w, prod_exp_term) * self.c[:i]
             kappa_j_count_prod = torch.count_nonzero(self.c[:i], dim=1).reshape(-1, 1)
-            log_sum_i_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod)
+            log_sum_i_prod = torch.sum(prod_exp_term_einsum / kappa_j_count_prod) + lambda0
             log_sum_i_prod.log_()
             log_prod_term = log_prod_term + log_sum_i_prod
 
         # integral term
         if n == 1:
-            log_integral_term = -lambda0 * self.timestamp_tensor[0]
+            log_integral_term = -lambda0 * self.timestamp_tensor[n - 1]
         else:
             # c_n_1 = torch.argwhere(self.c[n - 1] != 0)[:, 0]
             integral_delta_tn_tj = self.timestamp_tensor[n - 1] - self.timestamp_tensor[:n - 1]
@@ -418,15 +419,19 @@ class Particle:
                               alpha_lambda0: TENSOR,
                               alpha_beta: TENSOR,
                               alpha_tau: TENSOR,
+                              fix_beta: bool = False,
+                              fix_tau: bool = False,
                               random_num: int = 5000):
-        """
-        update lambda0, beta, tau
-        :param alpha_tau: concentration parameter for Gamma dist
-        :param alpha_beta: concentration parameter for Gamma dist
-        :param alpha_lambda0: concentration parameter for Gamma dist
-        :param random_num:
-        :param n:
-        :return:
+        """update hyperparameter by sampling parameters from prior distributions
+
+        Args:
+            n (int): _description_
+            alpha_lambda0 (TENSOR): _description_
+            alpha_beta (TENSOR): _description_
+            alpha_tau (TENSOR): _description_
+            fix_beta (bool, optional): _description_. Defaults to False.
+            fix_tau (bool, optional): _description_. Defaults to False.
+            random_num (int, optional): _description_. Defaults to 5000.
         """
         chunk_size = n // 100
         if self.chunk:
@@ -442,6 +447,10 @@ class Particle:
         lambda0_candi_tensor = lambda0_gamma.sample((random_num, ))
         beta_candi_tensor_mat = beta_gamma.sample((random_num, self.sum_kernel_num))
         tau_candi_tensor_mat = tau_gamma.sample((random_num, self.sum_kernel_num))
+        if fix_beta:
+            beta_candi_tensor_mat = self.ibhp.beta.repeat(random_num, 1).to(self.device)
+        if fix_tau:
+            tau_candi_tensor_mat = self.ibhp.tau.repeat(random_num, 1).to(self.device)
 
         # log prior prob
         lambda0_candi_prior_log = lambda0_gamma.log_prob(lambda0_candi_tensor)
@@ -449,8 +458,7 @@ class Particle:
         tau_candi_prior_log = tau_gamma.log_prob(tau_candi_tensor_mat)
 
         # log hawkes likelihood for each set of samples
-        hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood_without_prod_term_my_version, n),
-                                       in_dims=(0, 0, 0))
+        hawkes_likelihood_vfunc = vmap(partial(self.log_hawkes_likelihood, n), in_dims=(0, 0, 0))
         log_hawkes_likelihood_tensor = None
         if self.chunk:
             if chunk_size <= 1:
@@ -475,15 +483,23 @@ class Particle:
                                                                    tau_candi_tensor_mat)
         log_weight_tensor = lambda0_candi_prior_log + torch.sum(beta_candi_prior_log, dim=1) + torch.sum(
             tau_candi_prior_log, dim=1) + log_hawkes_likelihood_tensor
+        if fix_beta:
+            log_weight_tensor = log_hawkes_likelihood_tensor.clone()
+        if fix_tau:
+            log_weight_tensor = log_hawkes_likelihood_tensor.clone()
         # avoid overflow
         normalized_weight_tensor = softmax(log_weight_tensor - torch.max(log_weight_tensor), 0)
-        # normalized_weight_tensor = softmax(log_hawkes_likelihood_tensor - torch.max(log_hawkes_likelihood_tensor), 0)
+        # extract top 100 weight samples and normalize these samples' weights
         best_100_samples_index = torch.argsort(-normalized_weight_tensor)[:100]
+        best_100_samples_norm_weight = softmax(normalized_weight_tensor[best_100_samples_index])
         # fetch result and update hyperparameter
-        self.lambda0 = normalized_weight_tensor[best_100_samples_index] @ lambda0_candi_tensor[best_100_samples_index]
-        self.beta = normalized_weight_tensor[best_100_samples_index] @ beta_candi_tensor_mat[
-            best_100_samples_index, :]
-        self.tau = normalized_weight_tensor[best_100_samples_index] @ tau_candi_tensor_mat[best_100_samples_index, :]
+        self.lambda0 = best_100_samples_norm_weight @ lambda0_candi_tensor[best_100_samples_index]
+        self.beta = best_100_samples_norm_weight @ beta_candi_tensor_mat[best_100_samples_index, :]
+        self.tau = best_100_samples_norm_weight @ tau_candi_tensor_mat[best_100_samples_index, :]
+        if fix_beta:
+            self.beta = self.ibhp.beta.to(self.device)
+        if fix_tau:
+            self.tau = self.ibhp.tau.to(self.device)
 
         print(self.lambda0, self.beta, self.tau, sep='\n')
 
@@ -537,6 +553,7 @@ class StatesFixedParticle(Particle):
                  tau: TENSOR,
                  sum_kernel_num: int,
                  random_seed: int = None,
+                 device: torch.device = DEVICE0,
                  chunk: bool = False):
         super(StatesFixedParticle, self).__init__(particle_idx=particle_idx,
                                                   text_tensor=ibhp.text,
@@ -544,14 +561,16 @@ class StatesFixedParticle(Particle):
                                                   word_corpus=word_corpus,
                                                   sum_kernel_num=sum_kernel_num,
                                                   random_seed=random_seed,
+                                                  device=device,
                                                   chunk=chunk)
         self.real_factor_num_seq = ibhp.factor_num_tensor
         self.tau = tau.to(self.device)
         self.beta = beta.to(self.device)
         self.lambda0 = lambda0.to(self.device)
-        self.w = ibhp.w.to(self.device)
-        self.v = ibhp.v.to(self.device)
-        self.c = ibhp.c.to(self.device)
+        self.ibhp = ibhp
+        self.w = self.ibhp.w.to(self.device)
+        self.v = self.ibhp.v.to(self.device)
+        self.c = self.ibhp.c.to(self.device)
 
     def calculate_lambda_k(self, n):
         """
@@ -574,9 +593,10 @@ class StatesFixedParticle(Particle):
         self.calculate_lambda_k(n)
         c_n = torch.argwhere(self.c[n - 1] != 0)[:, 0]
         if n == 1:
-            self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_n].reshape(1, -1), dim=1)
+            self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor[c_n].reshape(1, -1), dim=1) + self.lambda0
         else:
-            self.lambda_tn_tensor = torch.hstack((self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n])))
+            self.lambda_tn_tensor = torch.hstack(
+                (self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n]) + self.lambda0))
 
 
 class HyperparameterFixedParticle(Particle):
@@ -608,3 +628,24 @@ class HyperparameterFixedParticle(Particle):
         self.lambda0 = ibhp.lambda0.to(self.device)
         self.beta = ibhp.beta.to(self.device)
         self.tau = ibhp.tau.to(self.device)
+
+
+class OneFactorParticle(Particle):
+    """Factor of the particle is fixed to 1
+
+    Args:
+        Particle (_type_): _description_
+    """
+    def __init__(self,
+                 word_corpus: TENSOR,
+                 timestamp_tensor: TENSOR,
+                 text_tensor: TENSOR,
+                 particle_idx: int,
+                 sum_kernel_num: int = 3,
+                 ibhp: IBHPTorch = None,
+                 fix_w_v: bool = False,
+                 chunk: bool = False,
+                 random_seed: int = None,
+                 device: torch.device = DEVICE0):
+        super().__init__(word_corpus, timestamp_tensor, text_tensor, particle_idx, sum_kernel_num, ibhp, fix_w_v,
+                         chunk, random_seed, device)

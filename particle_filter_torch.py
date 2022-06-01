@@ -11,12 +11,14 @@ import logging
 import os
 from copy import deepcopy
 from datetime import datetime
-import time
+
 import torch
 import torch.distributions as dist
 from torch.nn.functional import softmax
+
 from IBHP_simulation_torch import IBHPTorch
-from particle_torch import HyperparameterFixedParticle, Particle, StatesFixedParticle, TENSOR, DEVICE0
+from particle_torch import (DEVICE0, TENSOR, HyperparameterFixedParticle,
+                            Particle, StatesFixedParticle)
 
 
 # noinspection PyShadowingNames,DuplicatedCode,PyUnresolvedReferences
@@ -39,6 +41,8 @@ class ParticleFilter:
                  timestamp_tensor: TENSOR = None,
                  states_fixed: bool = False,
                  hyperparameter_fixed: bool = False,
+                 fix_beta: bool = False,
+                 fix_tau: bool = False,
                  device: torch.device = DEVICE0,
                  chunk: bool = False):
         """
@@ -60,8 +64,11 @@ class ParticleFilter:
             ibhp_ins (IBHPTorch, optional): _description_. Defaults to None.
             text_tensor (TENSOR, optional): _description_. Defaults to None.
             timestamp_tensor (TENSOR, optional): _description_. Defaults to None.
-            device (torch.device, optional): _description_. Defaults to DEVICE0.
             states_fixed (bool, optional): _description_. Defaults to False.
+            hyperparameter_fixed (bool, optional): _description_. Defaults to False.
+            fix_beta (bool, optional): _description_. Defaults to False.
+            fix_tau (bool, optional): _description_. Defaults to False.
+            device (torch.device, optional): _description_. Defaults to DEVICE0.
             chunk (bool, optional): _description_. Defaults to False.
         """
         self.word_corpus = word_corpus
@@ -81,6 +88,8 @@ class ParticleFilter:
         self.sum_kernel_num = sum_kernel_num
         self.states_fixed = states_fixed
         self.hyperparameter_fixed = hyperparameter_fixed
+        self.fix_beta = fix_beta
+        self.fix_tau = fix_tau
         if self.ibhp_ins:
             self.true_lambda_tn = self.ibhp_ins.lambda_tn_tensor
             self.timestamp_tensor = self.ibhp_ins.timestamp_tensor
@@ -97,6 +106,7 @@ class ParticleFilter:
                                     beta=self.beta,
                                     tau=self.tau,
                                     sum_kernel_num=self.sum_kernel_num,
+                                    device=self.device,
                                     chunk=chunk) for i in range(self.n_particle)
             ]
         elif self.hyperparameter_fixed:
@@ -135,6 +145,8 @@ class ParticleFilter:
                                            alpha_lambda0=self.alpha_lambda0,
                                            alpha_beta=self.alpha_beta,
                                            alpha_tau=self.alpha_tau,
+                                           fix_beta=self.fix_beta,
+                                           fix_tau=self.fix_tau,
                                            random_num=self.random_num)
             logging.info(f'[event {n}, states fixed particle {particle.particle_idx}] Updating particle weight')
             particle.update_log_particle_weight(
@@ -172,6 +184,8 @@ class ParticleFilter:
                                            alpha_lambda0=self.alpha_lambda0,
                                            alpha_beta=self.alpha_beta,
                                            alpha_tau=self.alpha_tau,
+                                           fix_beta=self.fix_beta,
+                                           fix_tau=self.fix_tau,
                                            random_num=self.random_num)
             logging.info(f'[event {n}, particle {particle.particle_idx}] Updating particle weight')
             particle.update_log_particle_weight(
@@ -270,7 +284,7 @@ class ParticleFilter:
                                f'{save_dir}/particle-{particle.particle_idx}/lambda_k_tensor_event_{n}.pt')
             # resampling
             n_eff = 1 / torch.sum(torch.square(self.particle_weight_tensor))
-            if n_eff < 0.8 * self.n_particle:
+            if n_eff <= 0.8 * self.n_particle:
                 self._resample_particle()
 
 
@@ -279,32 +293,34 @@ if __name__ == '__main__':
     ibhp = IBHPTorch(n_sample=n_sample,
                      sum_kernel_num=3,
                      word_num=1000,
-                     doc_len=20,
+                     doc_length=20,
                      lambda0=torch.tensor(2.),
                      beta=torch.tensor([1., 2., 3.]),
                      tau=torch.tensor([.3, .2, .1]),
-                     random_seed=10)
-    ibhp.generate_data()
+                     random_seed=99)
+    ibhp.generate_data(save_result=False, save_path='./model_result/simulation_data')
+    ibhp.plot_simulation_c_matrix()
     word_corpus = torch.arange(1000)
 
     # states fixed particle
-    pf_states_fixed_particles = ParticleFilter(n_particle=25,
+    pf_states_fixed_particles = ParticleFilter(n_particle=100,
                                                n_sample=n_sample,
                                                word_corpus=word_corpus,
                                                sum_kernel_num=3,
                                                lambda0=torch.tensor(5.),
                                                beta=torch.tensor([5., 5., 5.]),
-                                               tau=torch.tensor([.5, .5, .5]),
+                                               tau=torch.tensor([.3, .3, .3]),
                                                alpha_lambda0=torch.tensor(3.),
-                                               alpha_beta=torch.tensor(3.),
+                                               alpha_beta=torch.tensor(4.),
                                                alpha_tau=torch.tensor(1.5),
-                                               random_num=1000,
-                                               states_fixed=True,
+                                               random_num=10000,
+                                               states_fixed=False,
                                                fix_w_v=True,
                                                ibhp_ins=ibhp,
+                                               device=torch.device('cuda:1'),
+                                               fix_beta=True,
                                                chunk=False)
     pf_states_fixed_particles.filtering(save_dir='./model_result/test_tensor_result', username='test', save_res=True)
-
     # hyperparameter fixed particle
     # pf_hyperparameter_fixed_particles = ParticleFilter(n_particle=50,
     #                                                    n_sample=n_sample,
