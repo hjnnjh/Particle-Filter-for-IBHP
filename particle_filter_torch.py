@@ -9,6 +9,7 @@
 """
 import logging
 import os
+import shutil
 from copy import deepcopy
 from datetime import datetime
 
@@ -132,7 +133,7 @@ class ParticleFilter:
         self.particle_weight_tensor = torch.tensor([1 / self.n_particle
                                                     for i in torch.arange(self.n_particle)]).to(self.device)
 
-    def __generate_status_for_states_fixed_particles(self, n: int):
+    def _generate_status_for_states_fixed_particles(self, n: int):
         """generate status for states fixed particles
 
         Args:
@@ -152,7 +153,7 @@ class ParticleFilter:
             particle.update_log_particle_weight(
                 old_particle_weight=self.particle_weight_tensor[particle.particle_idx], n=n)
 
-    def __generate_status_for_hyperparameter_fixed_particles(self, n: int):
+    def _generate_status_for_hyperparameter_fixed_particles(self, n: int):
         """generate status for hyperparameter fixed particles
 
         Args:
@@ -228,11 +229,17 @@ class ParticleFilter:
         for idx, particle in enumerate(self.particle_list):
             particle.reset_particle_index(new_index=idx)
 
-    def filtering(self, save_dir: str, username: str, save_res: bool = False):
-        time4save = datetime.strftime(datetime.now(), '%Y_%m_%d_%H_%M_%S')
-        save_dir = f'{save_dir}/{username}_{time4save}'
+    def filtering(self, save_dir: str, username: str, rename_by_timestamp: bool = False, save_res: bool = False):
+        if rename_by_timestamp:
+            time4save = datetime.strftime(datetime.now(), '%Y_%m_%d_%H_%M_%S')
+            save_dir = f'{save_dir}/{username}_{time4save}'
+        else:
+            save_dir = f'{save_dir}/{username}'
         if save_res:
             if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            else:  # clear old results
+                shutil.rmtree(save_dir)
                 os.makedirs(save_dir)
             torch.save(self.timestamp_tensor, f'{save_dir}/timestamp_tensor.pt')
             torch.save(self.text_tensor, f'{save_dir}/text_tensor.pt')
@@ -242,9 +249,9 @@ class ParticleFilter:
         avg_lambda0_tensor, avg_beta_tensor, avg_tau_tensor = None, None, None
         for n in torch.arange(1, self.n_sample + 1):
             if self.states_fixed:
-                self.__generate_status_for_states_fixed_particles(n=n)
+                self._generate_status_for_states_fixed_particles(n=n)
             elif self.hyperparameter_fixed:
-                self.__generate_status_for_hyperparameter_fixed_particles(n=n)
+                self._generate_status_for_hyperparameter_fixed_particles(n=n)
             else:
                 self._generate_status_for_particles(n=n)
             self._update_particle_weight_tensor()

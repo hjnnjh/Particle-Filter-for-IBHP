@@ -28,19 +28,19 @@ def test_log_hawkes_likelihood():
     ibhp = IBHPTorch(n_sample=n_sample,
                      doc_length=20,
                      word_num=1000,
-                     sum_kernel_num=3,
+                     sum_kernel_num=1,
                      lambda0=torch.tensor(2.),
-                     beta=torch.tensor([1., 2., 3.]),
-                     tau=torch.tensor([.3, .2, .1]),
+                     beta=torch.tensor([5.]),
+                     tau=torch.tensor([.1]),
                      random_seed=10)
     ibhp.generate_data()
     word_corpus = torch.arange(1000)
     particle = StatesFixedParticle(word_corpus=word_corpus,
                                    particle_idx=1,
-                                   sum_kernel_num=3,
+                                   sum_kernel_num=1,
                                    lambda0=torch.tensor(2.),
-                                   beta=torch.tensor([1., 2., 3.]),
-                                   tau=torch.tensor([.3, .2, .1]),
+                                   beta=torch.tensor([5.]),
+                                   tau=torch.tensor([.1]),
                                    chunk=False,
                                    device=DEVICE,
                                    ibhp=ibhp)

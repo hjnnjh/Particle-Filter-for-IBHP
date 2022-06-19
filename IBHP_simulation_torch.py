@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributions as dist
-from functorch import vmap
 from matplotlib import rcParams
 
 
@@ -85,40 +84,6 @@ class IBHPTorch:
             self.lambda_k_tensor = torch.sum(kappa_history / kappa_history_count, dim=0)
 
     def generate_timestamp_by_thinning(self, n):
-        flag = None
-        while not flag:
-            if n == 1:
-                lambda_star = self.lambda0
-                u = dist.Uniform(0., 1.).sample()
-                candidate_next_timestamp = -(1 / lambda_star) * torch.log(u)
-                candidate_timestamp_tensor = torch.tensor([candidate_next_timestamp])
-            else:
-                lambda_star = self.lambda_tn_tensor[-1]
-                u = dist.Uniform(0., 1.).sample()
-                time_interval = -(1 / lambda_star) * torch.log(u)
-                candidate_next_timestamp = self.timestamp_tensor[-1] + time_interval
-                candidate_timestamp_tensor = self.timestamp_tensor.clone()
-                candidate_timestamp_tensor = torch.hstack([candidate_timestamp_tensor, candidate_next_timestamp])
-            delta_t = candidate_timestamp_tensor[-1] - candidate_timestamp_tensor
-            delta_t.unsqueeze_(1)
-            base_kernel_mat = self.base_kernel(delta_t, self.beta, self.tau)
-            kappa_t = torch.einsum('lk,tl->tk', self.w, base_kernel_mat) * self.c[:delta_t.shape[0]]
-            kappa_t_count = torch.count_nonzero(self.c[:delta_t.shape[0]], dim=1).reshape(-1, 1)
-            lambda_k_tensor = torch.sum(kappa_t / kappa_t_count, dim=0)
-            c_t = torch.argwhere(self.c[-1] != 0)[:, 0]
-            lambda_t = torch.sum(lambda_k_tensor[c_t])
-            # rejection test
-            s = dist.Uniform(0., 1.).sample()
-            if s <= lambda_t / lambda_star:
-                if n == 1:
-                    self.timestamp_tensor = torch.tensor([candidate_next_timestamp])
-                else:
-                    self.timestamp_tensor = torch.hstack([self.timestamp_tensor, candidate_next_timestamp])
-                flag = "PASS"
-            else:
-                continue
-
-    def generate_timestamp_by_thinning_revised(self, n):
         c_n_nonzero_index = torch.argwhere(self.c[-1] != 0)[:, 0]
         flag = False
         if n == 1:
@@ -168,7 +133,7 @@ class IBHPTorch:
         self.v = dist.Dirichlet(self.v_0).sample((self.K, )).T
 
         # sample t_1
-        self.generate_timestamp_by_thinning_revised(1)
+        self.generate_timestamp_by_thinning(1)
         multi_dist_prob = torch.einsum(
             'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[0])
         self.text = dist.Multinomial(self.D, multi_dist_prob).sample()
@@ -203,7 +168,7 @@ class IBHPTorch:
             self.c = torch.vstack([self.c, c_old])
 
         # sample t_n
-        self.generate_timestamp_by_thinning_revised(n)
+        self.generate_timestamp_by_thinning(n)
 
         # sample T_n
         multi_dist_prob = torch.einsum(
@@ -288,7 +253,7 @@ class IBHPTorch_One_Factor(IBHPTorch):
         self.v = dist.Dirichlet(self.v_0).sample([self.K]).T
 
         # sample t_1
-        self.generate_timestamp_by_thinning_revised(1)
+        self.generate_timestamp_by_thinning(1)
         multi_dist_prob = torch.einsum(
             'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[0])
         self.text = dist.Multinomial(self.D, multi_dist_prob).sample()
@@ -297,7 +262,7 @@ class IBHPTorch_One_Factor(IBHPTorch):
 
     def generate_following_event(self, n):
         self.c = torch.tensor([1]).repeat(n, 1)
-        self.generate_timestamp_by_thinning_revised(n)
+        self.generate_timestamp_by_thinning(n)
         multi_dist_prob = torch.einsum(
             'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[n - 1])
         text_n = dist.Multinomial(self.D, multi_dist_prob).sample()
@@ -334,7 +299,7 @@ class IBHPTorch_One_Factor(IBHPTorch):
 
 if __name__ == "__main__":
     ibhp_ins = IBHPTorch(
-        n_sample=500,
+        n_sample=1000,
         random_seed=10,
         doc_length=20,
         word_num=1000,
