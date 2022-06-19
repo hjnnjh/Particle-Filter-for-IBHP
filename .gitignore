@@ -137,3 +137,8 @@ img*/
 pyro_sample.py
 model_result/
 nips-dataset/
+.DS_Store
+pickle_files/
+*.zip
+csv_res/
+*agg.*
