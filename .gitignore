@@ -143,3 +143,5 @@ pickle_files/
 csv_res/
 *agg.*
 *quora*
+code/hawkes_simulation.py
+code/test_likelihood.py
