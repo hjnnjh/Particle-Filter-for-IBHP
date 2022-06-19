@@ -142,3 +142,4 @@ pickle_files/
 *.zip
 csv_res/
 *agg.*
+*quora*
