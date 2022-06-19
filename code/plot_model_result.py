@@ -323,7 +323,7 @@ def plot_user_c(save_dir: str, color_bar=False):
         fig.colorbar(ms, ax=ax)
     fig.tight_layout()
     if not os.path.exists(f'./img/{username}'):
-        os.mkdir(f'./img/{username}')
+        os.makedirs(f'./img/{username}')
     fig.savefig(f'./img/{username}/particle_{best_particle_index}_c_mat.png')
     logging.info(
         f'{username} particle-{best_particle_index} c_mat plot save to ./img/{username}/particle_{best_particle_index}_c_mat.png'

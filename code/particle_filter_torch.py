@@ -7,9 +7,11 @@
 @Contact :   jinnan_huang@stu.xjtu.edu.cn
 @Desc    :   None
 """
+import argparse
 import logging
 import os
 import shutil
+from ast import arg
 from copy import deepcopy
 from datetime import datetime
 
@@ -18,8 +20,7 @@ import torch.distributions as dist
 from torch.nn.functional import softmax
 
 from IBHP_simulation_torch import IBHPTorch
-from particle_torch import (DEVICE0, TENSOR, HyperparameterFixedParticle,
-                            Particle, StatesFixedParticle)
+from particle_torch import (DEVICE0, TENSOR, HyperparameterFixedParticle, Particle, StatesFixedParticle)
 
 
 # noinspection PyShadowingNames,DuplicatedCode,PyUnresolvedReferences
@@ -229,12 +230,25 @@ class ParticleFilter:
         for idx, particle in enumerate(self.particle_list):
             particle.reset_particle_index(new_index=idx)
 
-    def filtering(self, save_dir: str, username: str, rename_by_timestamp: bool = False, save_res: bool = False):
+    def filtering(self,
+                  save_dir: str,
+                  prefix: str = 'test',
+                  rename_by_timestamp: bool = False,
+                  save_res: bool = False):
+        """
+        filtering step in the particle filter
+
+        Args:
+            save_dir (str): dir to save filtering result
+            prefix (str, optional): _description_. prefix in save path
+            rename_by_timestamp (bool, optional): _description_. if rename folder by adding timestamp behind prefix
+            save_res (bool, optional): _description_. if save filtering result
+        """
         if rename_by_timestamp:
             time4save = datetime.strftime(datetime.now(), '%Y_%m_%d_%H_%M_%S')
-            save_dir = f'{save_dir}/{username}_{time4save}'
+            save_dir = f'{save_dir}/{prefix}_{time4save}'
         else:
-            save_dir = f'{save_dir}/{username}'
+            save_dir = f'{save_dir}/{prefix}'
         if save_res:
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
@@ -255,9 +269,7 @@ class ParticleFilter:
             else:
                 self._generate_status_for_particles(n=n)
             self._update_particle_weight_tensor()
-            print(
-                f'[event {n}] particle weight before normalizing: {self.particle_weight_tensor}'
-            )
+            print(f'[event {n}] particle weight before normalizing: {self.particle_weight_tensor}')
             self._normalize_particle_weight_tensor()
             logging.info(f'[event {n}] particle weight: {self.particle_weight_tensor}')
             lambda0_particles = torch.stack([particle.lambda0 for particle in self.particle_list], 0)
@@ -284,7 +296,7 @@ class ParticleFilter:
                 torch.save(self.particle_weight_tensor, f'{save_dir}/particle_weight_tensor.pt')
                 for particle in self.particle_list:
                     if not os.path.exists(f'{save_dir}/particle-{particle.particle_idx}'):
-                        os.mkdir(f'{save_dir}/particle-{particle.particle_idx}')
+                        os.makedirs(f'{save_dir}/particle-{particle.particle_idx}')
                     torch.save(particle.c, f'{save_dir}/particle-{particle.particle_idx}/c.pt')
                     torch.save(particle.w, f'{save_dir}/particle-{particle.particle_idx}/w.pt')
                     torch.save(particle.v, f'{save_dir}/particle-{particle.particle_idx}/v.pt')
@@ -300,54 +312,54 @@ class ParticleFilter:
 
 
 if __name__ == '__main__':
+    # parameters for simulation of IBHP
     n_sample = 500
+    sum_kernel_num = 3
+    vocab_size = 1000
+    doc_len = 20
+    sim_lambda0 = 2.
+    sim_beta = [1., 2., 3.]
+    sim_tau = [.1, .2, .3]
+    random_seed = None
+    save_sim_res = True
+    save_sim_dir = './model_result/simulation_data'
+
+    # parameters for filtering
+    pf_lambda0 = 3.
+    pf_beta = [3., 3., 3.]
+    pf_tau = [.2, .2, .2]
+    pf_alpha_lambda0 = 3.
+    pf_alpha_beta = 4.
+    pf_alpha_tau = 1.5
+    random_num_sample = 10000
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    chunk = False
+
     ibhp = IBHPTorch(n_sample=n_sample,
-                     sum_kernel_num=3,
-                     word_num=1000,
-                     doc_length=20,
-                     lambda0=torch.tensor(2.),
-                     beta=torch.tensor([1., 2., 3.]),
-                     tau=torch.tensor([.3, .2, .1]),
-                     random_seed=99)
-    ibhp.generate_data(save_result=False, save_path='./model_result/simulation_data')
+                     sum_kernel_num=sum_kernel_num,
+                     word_num=vocab_size,
+                     doc_length=doc_len,
+                     lambda0=torch.tensor(sim_lambda0),
+                     beta=torch.tensor(sim_beta),
+                     tau=torch.tensor(sim_tau),
+                     random_seed=random_seed)
+    ibhp.generate_data(save_result=save_sim_res, save_path=save_sim_dir)
     ibhp.plot_simulation_c_matrix()
-    word_corpus = torch.arange(1000)
+    word_corpus = torch.arange(vocab_size)
 
     # states fixed particle
-    pf_states_fixed_particles = ParticleFilter(n_particle=100,
-                                               n_sample=n_sample,
-                                               word_corpus=word_corpus,
-                                               sum_kernel_num=3,
-                                               lambda0=torch.tensor(5.),
-                                               beta=torch.tensor([5., 5., 5.]),
-                                               tau=torch.tensor([.3, .3, .3]),
-                                               alpha_lambda0=torch.tensor(3.),
-                                               alpha_beta=torch.tensor(4.),
-                                               alpha_tau=torch.tensor(1.5),
-                                               random_num=10000,
-                                               states_fixed=False,
-                                               fix_w_v=True,
-                                               ibhp_ins=ibhp,
-                                               device=torch.device('cuda:1'),
-                                               fix_beta=True,
-                                               chunk=False)
-    pf_states_fixed_particles.filtering(save_dir='./model_result/test_tensor_result', username='test', save_res=True)
-    # hyperparameter fixed particle
-    # pf_hyperparameter_fixed_particles = ParticleFilter(n_particle=50,
-    #                                                    n_sample=n_sample,
-    #                                                    word_corpus=word_corpus,
-    #                                                    sum_kernel_num=3,
-    #                                                    lambda0=torch.tensor(0.),
-    #                                                    beta=torch.tensor([0.]),
-    #                                                    tau=torch.tensor([0.]),
-    #                                                    alpha_lambda0=torch.tensor(1.),
-    #                                                    alpha_beta=torch.tensor(1.),
-    #                                                    alpha_tau=torch.tensor(1.),
-    #                                                    random_num=1000,
-    #                                                    hyperparameter_fixed=True,
-    #                                                    fix_w_v=True,
-    #                                                    ibhp_ins=ibhp,
-    #                                                    chunk=False)
-    # pf_hyperparameter_fixed_particles.filtering(save_dir='./model_result/test_tensor_result',
-    #                                             username='test',
-    #                                             save_res=True)
+    pf = ParticleFilter(n_particle=100,
+                        n_sample=n_sample,
+                        word_corpus=word_corpus,
+                        sum_kernel_num=sum_kernel_num,
+                        lambda0=torch.tensor(pf_lambda0),
+                        beta=torch.tensor(pf_beta),
+                        tau=torch.tensor(pf_tau),
+                        alpha_lambda0=torch.tensor(pf_alpha_lambda0),
+                        alpha_beta=torch.tensor(pf_alpha_beta),
+                        alpha_tau=torch.tensor(pf_alpha_tau),
+                        random_num=random_num_sample,
+                        ibhp_ins=ibhp,
+                        device=device,
+                        chunk=chunk)
+    pf.filtering(save_dir='./model_result/test_tensor_result', prefix='test', save_res=True, rename_by_timestamp=True)

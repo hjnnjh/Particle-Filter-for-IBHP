@@ -183,6 +183,13 @@ class IBHPTorch:
             [self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor[c_n]) + self.lambda0])
 
     def generate_data(self, save_result=False, save_path: str = None):
+        """
+        save simulation data
+
+        Args:
+            save_result (bool, optional): _description_. if save_result is True, save simulation data. Defaults to False.
+            save_path (str, optional): _description_. Path to save simulation data. Defaults to None.
+        """
         logging.info('Begin generating simulation data')
         for i in torch.arange(1, self.n_sample + 1):
             if i == 1:
@@ -212,9 +219,10 @@ class IBHPTorch:
         ax.set_ylabel(r'$\lambda(t_n)$')
         ax.set_xticks(self.timestamp_tensor)
         ax.set_xticklabels([])
-        # plt.show()
-        fig.savefig('./img/simulation_data_intensity.png')
-        logging.info('Intensity function plot saved to ./img/simulation_data_intensity.png')
+        if not os.path.exists('./img_test'):
+            os.makedirs('./img_test')
+        fig.savefig('./img_test/simulation_data_intensity.png')
+        logging.info('Intensity function plot saved to ./img_test/simulation_data_intensity.png')
         plt.close('all')
 
     def plot_simulation_c_matrix(self):
@@ -224,76 +232,10 @@ class IBHPTorch:
         ax.set_xlabel('factors')
         fig.colorbar(ms, ax=ax)
         fig.tight_layout()
-        fig.savefig('./img/simulation_data_c_matrix.png')
-        logging.info('C matrix plot saved to ./img/simulation_data_c_matrix.png')
-        plt.close('all')
-
-
-class IBHPTorch_One_Factor(IBHPTorch):
-    """Simulation class keep factor num = 1
-
-    Args:
-        IBHPTorch (IBHPTorch): _description_
-    """
-    def __init__(self,
-                 doc_length: int,
-                 word_num: int,
-                 sum_kernel_num,
-                 lambda0: torch.Tensor,
-                 beta: torch.Tensor,
-                 tau: torch.Tensor,
-                 n_sample=100,
-                 random_seed=None):
-        super().__init__(doc_length, word_num, sum_kernel_num, lambda0, beta, tau, n_sample, random_seed)
-
-    def generate_first_event(self):
-        self.K = 1
-        self.c = torch.ones([1, self.K])
-        self.w = dist.Dirichlet(self.w_0).sample([self.K]).T
-        self.v = dist.Dirichlet(self.v_0).sample([self.K]).T
-
-        # sample t_1
-        self.generate_timestamp_by_thinning(1)
-        multi_dist_prob = torch.einsum(
-            'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[0])
-        self.text = dist.Multinomial(self.D, multi_dist_prob).sample()
-        self.calculate_lambda_k(1)
-        self.lambda_tn_tensor = torch.sum(self.lambda_k_tensor, dim=0, keepdim=True)
-
-    def generate_following_event(self, n):
-        self.c = torch.tensor([1]).repeat(n, 1)
-        self.generate_timestamp_by_thinning(n)
-        multi_dist_prob = torch.einsum(
-            'ij->i', self.v[:, torch.argwhere(self.c[-1] != 0)[:, 0]]) / torch.count_nonzero(self.c[n - 1])
-        text_n = dist.Multinomial(self.D, multi_dist_prob).sample()
-        self.text = torch.vstack([self.text, text_n])
-        self.calculate_lambda_k(n)
-        self.lambda_tn_tensor = torch.hstack([self.lambda_tn_tensor, torch.sum(self.lambda_k_tensor)])
-
-    def intensity_function(self, timestamp_upper):
-        delta_t = timestamp_upper - self.timestamp_tensor[self.timestamp_tensor <= timestamp_upper]
-        delta_t.unsqueeze_(1)
-        smooth_lambda_t_tensor = self.base_kernel(delta_t, self.beta, self.tau)
-        smooth_lambda_t_tensor = torch.einsum('lk,tl->tk', self.w, smooth_lambda_t_tensor)
-        smooth_lambda_t_tensor = smooth_lambda_t_tensor.sum()
-        return smooth_lambda_t_tensor
-
-    def plot_intensity_function(self):
-        fig, ax = plt.subplots(figsize=(26, 5), dpi=400)
-        ax.scatter(self.timestamp_tensor, self.lambda_tn_tensor, color='red', marker='*', s=50)
-        # ax.plot(self.timestamp_tensor, self.lambda_tn_tensor, color='blue')
-        smooth_x = torch.linspace(self.timestamp_tensor[0], self.timestamp_tensor[-1], 10000)
-        smooth_y_list = []
-        for x in smooth_x:
-            smooth_y_list.append(self.intensity_function(x))
-        smooth_y = torch.stack(smooth_y_list)
-        ax.plot(smooth_x, smooth_y, color='blue')
-        ax.set_xlabel('event')
-        ax.set_ylabel(r'$\lambda(t_n)$')
-        ax.set_xticks(self.timestamp_tensor)
-        ax.set_xticklabels([])
-        fig.savefig('./img/simulation_data_intensity.png')
-        logging.info('Intensity function plot saved to ./img/simulation_data_intensity.png')
+        if not os.path.exists('./img_test'):
+            os.makedirs('./img_test')
+        fig.savefig('./img_test/simulation_data_c_matrix.png')
+        logging.info('C matrix plot saved to ./img_test/simulation_data_c_matrix.png')
         plt.close('all')
 
 
