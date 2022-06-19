@@ -4,6 +4,8 @@
 - `IBHP` was proposed in Paper: [***The Indian Buffet Hawkes Process to Model Evolving Latent Influences***](http://auai.org/uai2018/proceedings/papers/289.pdf).
 - **(Important)** Now this repository is still providing an unstable version of implementation of IBHP. There are some mistakes in derivation of model such as likelihood function etc. If you have some suggestions, I'm very glad to receive some pull-requests :)
 
+![](https://raw.githubusercontent.com/hjnnjh/picgo-img/main/202206192235558.jpg)
+
 ## Structure of This Project
     Particle-Filter-for-IBHP
     ├─.gitignore
