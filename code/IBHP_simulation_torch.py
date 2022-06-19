@@ -31,7 +31,7 @@ class IBHPTorch:
     def __init__(self,
                  doc_length: int,
                  word_num: int,
-                 sum_kernel_num,
+                 sum_kernel_num: int,
                  lambda0: torch.Tensor,
                  beta: torch.Tensor,
                  tau: torch.Tensor,

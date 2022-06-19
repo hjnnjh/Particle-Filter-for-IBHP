@@ -649,24 +649,3 @@ class HyperparameterFixedParticle(Particle):
         self.lambda0 = ibhp.lambda0.to(self.device)
         self.beta = ibhp.beta.to(self.device)
         self.tau = ibhp.tau.to(self.device)
-
-
-class OneFactorParticle(Particle):
-    """Factor of the particle is fixed to 1
-
-    Args:
-        Particle (_type_): _description_
-    """
-    def __init__(self,
-                 word_corpus: TENSOR,
-                 timestamp_tensor: TENSOR,
-                 text_tensor: TENSOR,
-                 particle_idx: int,
-                 sum_kernel_num: int = 3,
-                 ibhp: IBHPTorch = None,
-                 fix_w_v: bool = False,
-                 chunk: bool = False,
-                 random_seed: int = None,
-                 device: torch.device = DEVICE0):
-        super().__init__(word_corpus, timestamp_tensor, text_tensor, particle_idx, sum_kernel_num, ibhp, fix_w_v,
-                         chunk, random_seed, device)
